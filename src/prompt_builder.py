@@ -2,8 +2,39 @@
 スクレイピングデータ・統計データをプロンプトテンプレートに埋め込む。
 """
 
+# 競艇場ごとのイン有利傾向コメント
+STADIUM_TENDENCY = {
+    "01": "桐生はインがやや弱め。スタートが速い外枠がまくりに来やすい傾向。",
+    "02": "戸田は標準的なイン有利。ただし水面が狭くスタートが混戦になりやすい。",
+    "03": "江戸川はインが全国最弱クラス。潮位・流れの影響で外枠が有利になりやすい。",
+    "04": "平和島はインがやや弱め。追い風・横風が強いと差しが決まりやすい。",
+    "05": "多摩川はインがやや強め。静水面でスタートが決まればイン有利。",
+    "06": "浜名湖は標準的なイン有利。風が強いと荒れやすい。",
+    "07": "蒲郡はインが強め。安定した水面でイン逃げが決まりやすい。",
+    "08": "常滑はインがやや強め。追い風になると差しが増える傾向。",
+    "09": "津は標準的なイン有利。風の影響を受けやすい水面。",
+    "10": "三国は標準的なイン有利。風が強い日はまくりが有効。",
+    "11": "びわこはインがやや弱め。波が出やすく外枠が台頭しやすい。",
+    "12": "住之江は標準的なイン有利。インが安定している室内レース場。",
+    "13": "尼崎は標準的なイン有利。静水面で比較的イン有利。",
+    "14": "鳴門は標準的なイン有利。潮の影響で水面が変化しやすい。",
+    "15": "丸亀はインがやや強め。瀬戸内の穏やかな水面。",
+    "16": "児島はインがやや強め。風向きによって差しが増える。",
+    "17": "宮島はインがやや弱め。潮と風の影響でアウトが台頭しやすい。",
+    "18": "徳山は標準的なイン有利。",
+    "19": "下関は標準的なイン有利。",
+    "20": "若松は標準的なイン有利。",
+    "21": "芦屋はインがやや強め。静水面でイン有利が続きやすい。",
+    "22": "福岡は標準的なイン有利。",
+    "23": "唐津はインがやや強め。",
+    "24": "大村はインが全国最強クラス。1号艇逃げ率が極めて高い。",
+}
+
 PROMPT_TEMPLATE = """\
 あなたは競艇予想の専門家AIです。以下のレース情報を分析し、予想を行ってください。
+
+【対象レース】
+{race_info_line}
 
 【出走表】
 {racelist_section}
@@ -27,6 +58,30 @@ PROMPT_TEMPLATE = """\
 風: {wind_dir} {wind_speed}m
 水温: {water_temp}℃
 波高: {wave_height}cm
+
+【専門家評価】
+以下は各分野の専門家による事前評価です。予想の参考にしてください。
+
+■ モーター専門家
+{expert_motor}
+
+■ 競艇場専門家
+{expert_stadium}
+
+■ 展開予想専門家
+{expert_development}
+
+■ 今節実績専門家
+{expert_session}
+
+■ 展示専門家
+{expert_exhibit}
+
+■ 大穴専門家
+{expert_upset}
+
+■ 天候専門家
+{expert_weather}
 
 【競艇の基本知識】
 競艇はインコース（内枠）が圧倒的に有利なスポーツです。
@@ -96,8 +151,9 @@ PROMPT_TEMPLATE = """\
 """
 
 
+# ---- ヘルパー関数 ----
+
 def _fmt_fl(f_count: str, l_count: str) -> str:
-    """F/L情報をフォーマットする。0なら省略。"""
     parts = []
     if f_count and f_count != "0":
         parts.append(f"F{f_count}")
@@ -107,7 +163,6 @@ def _fmt_fl(f_count: str, l_count: str) -> str:
 
 
 def _fmt_frame_stats(frame_stats: dict, frame_no: int) -> str:
-    """枠別成績を "R1/R2/R3%" 形式にフォーマット。データなし時は "データなし"。"""
     s = frame_stats.get(frame_no)
     if not s:
         return "データなし"
@@ -115,86 +170,327 @@ def _fmt_frame_stats(frame_stats: dict, frame_no: int) -> str:
 
 
 def _fmt_technique(tech: dict) -> str:
-    """決まり手傾向を "逃げ X% / 差し X% / ..." 形式にフォーマット。"""
     if not tech:
         return "データなし"
     order = ["逃げ", "まくり", "差し", "まくり差し", "抜き", "恵まれ"]
-    parts = []
-    for key in order:
-        val = tech.get(key, 0.0)
-        if val > 0:
-            parts.append(f"{key} {val}%")
+    parts = [f"{k} {tech[k]}%" for k in order if tech.get(k, 0) > 0]
     return " / ".join(parts) if parts else "データなし"
 
+
+def _rank_by(boats: list[dict], key: str, reverse: bool = True) -> list[tuple]:
+    """指定キーでソートし (艇番, 値) リストを返す。値が空・0 は末尾。"""
+    def _val(b):
+        try:
+            return float(b.get(key, 0) or 0)
+        except (ValueError, TypeError):
+            return 0.0
+    return sorted(
+        [(b["boat_no"], _val(b)) for b in boats],
+        key=lambda x: x[1],
+        reverse=reverse,
+    )
+
+
+# ---- 専門家コメント生成 ----
+
+def _expert_motor(boats: list[dict], bi_boats: list[dict]) -> str:
+    """モーター専門家: モーター連対率・展示タイムの順位評価。"""
+    motor_rank = _rank_by(boats, "motor_rate", reverse=True)
+    exhibit_rank = _rank_by(bi_boats, "exhibit_time", reverse=False)  # 小さいほど速い
+
+    lines = []
+    top_motor_no, top_motor_val = motor_rank[0]
+    lines.append(f"モーター連対率1位: {top_motor_no}号艇（{top_motor_val:.1f}%）")
+
+    # 2位以降で30%超もあれば言及
+    strong = [f"{n}号艇({v:.1f}%)" for n, v in motor_rank[1:] if v >= 30]
+    if strong:
+        lines.append(f"好調モーター他: {', '.join(strong)}")
+
+    # 展示タイム
+    top_ex_no, top_ex_val = exhibit_rank[0]
+    lines.append(f"展示タイム最速: {top_ex_no}号艇（{top_ex_val:.2f}秒）")
+    bottom_ex_no, bottom_ex_val = exhibit_rank[-1]
+    lines.append(f"展示タイム最遅: {bottom_ex_no}号艇（{bottom_ex_val:.2f}秒）")
+
+    # 1号艇のモーター位置
+    boat1_motor_pos = next((i + 1 for i, (n, _) in enumerate(motor_rank) if n == 1), None)
+    boat1_ex_pos = next((i + 1 for i, (n, _) in enumerate(exhibit_rank) if n == 1), None)
+    boat1 = next((b for b in boats if b["boat_no"] == 1), None)
+    if boat1:
+        lines.append(
+            f"1号艇モーター連対率{boat1['motor_rate']}%（6艇中{boat1_motor_pos}位）、"
+            f"展示タイム{boat1_ex_pos}位"
+        )
+    return "。".join(lines) + "。"
+
+
+def _expert_stadium(boats: list[dict], jcd: str) -> str:
+    """競艇場専門家: 当地勝率ランキング + 場の特性。"""
+    local_rank = _rank_by(boats, "local_rate", reverse=True)
+    tendency = STADIUM_TENDENCY.get(jcd, "")
+
+    lines = [tendency] if tendency else []
+    top3 = [f"{n}号艇（{v:.2f}）" for n, v in local_rank[:3] if v > 0]
+    lines.append(f"当地勝率上位: {', '.join(top3)}")
+
+    # 1号艇の当地順位
+    boat1_pos = next((i + 1 for i, (n, _) in enumerate(local_rank) if n == 1), None)
+    boat1 = next((b for b in boats if b["boat_no"] == 1), None)
+    if boat1:
+        lines.append(f"1号艇当地勝率{boat1['local_rate']}（6艇中{boat1_pos}位）")
+    return "。".join(lines) + "。"
+
+
+def _expert_development(boats: list[dict], stats_by_racer: dict) -> str:
+    """展開予想専門家: 決まり手傾向・枠別成績から展開シナリオを提示。"""
+    lines = []
+
+    boat1 = next((b for b in boats if b["boat_no"] == 1), None)
+    if boat1:
+        rs = stats_by_racer.get(boat1["racer_id"], {})
+        fs = rs.get("frame_stats", {}).get(1, {})
+        ts = rs.get("technique_stats", {})
+        r1 = fs.get("rate1", 0)
+        nige = ts.get("逃げ", 0)
+        if r1 > 0:
+            lines.append(f"1号艇の枠別1着率{r1}%、逃げ{nige}%")
+        else:
+            lines.append("1号艇の過去統計データなし（当日気配で判断）")
+
+    # まくり/差しが強い外枠を探す
+    threats = []
+    for b in boats:
+        if b["boat_no"] <= 1:
+            continue
+        rs = stats_by_racer.get(b["racer_id"], {})
+        ts = rs.get("technique_stats", {})
+        makuri = ts.get("まくり", 0) + ts.get("まくり差し", 0)
+        if makuri >= 25:
+            threats.append(f"{b['boat_no']}号艇（まくり系{makuri:.1f}%）")
+    if threats:
+        lines.append(f"まくり/まくり差し傾向が強い: {', '.join(threats)}")
+    else:
+        lines.append("外枠のまくり傾向は標準的")
+
+    return "。".join(lines) + "。"
+
+
+def _expert_session(boats: list[dict]) -> str:
+    """今節実績専門家: 今節着順リストから調子を評価。"""
+    lines = []
+    for b in boats:
+        results = b.get("recent_results", [])
+        if not results:
+            continue
+        # 数値のみの着順を抽出（F/Lなどを除く）
+        numeric = [int(r) for r in results if r.isdigit()]
+        if not numeric:
+            continue
+        avg = sum(numeric) / len(numeric)
+        trend = "好調" if avg <= 2.5 else ("普通" if avg <= 4.0 else "不調")
+        results_str = "→".join(results[-4:])  # 直近4走
+        lines.append(f"{b['boat_no']}号艇: 直近{results_str}（平均{avg:.1f}着・{trend}）")
+
+    return "\n".join(lines) if lines else "今節成績データなし。"
+
+
+def _expert_exhibit(bi_boats: list[dict]) -> str:
+    """展示専門家: ST展示・展示タイム・チルトの評価。"""
+    lines = []
+
+    # ST展示の積極性（値が小さいほど積極的、Fは除外）
+    st_list = []
+    for b in bi_boats:
+        st_raw = b.get("st_exhibit", "")
+        if st_raw.startswith("F"):
+            continue
+        try:
+            st_list.append((b["boat_no"], float(st_raw)))
+        except (ValueError, TypeError):
+            pass
+
+    if st_list:
+        st_sorted = sorted(st_list, key=lambda x: x[1])
+        most_aggressive = st_sorted[0]
+        lines.append(f"ST展示最積極: {most_aggressive[0]}号艇（{most_aggressive[1]:.2f}）")
+        most_passive = st_sorted[-1]
+        lines.append(f"ST展示最慎重: {most_passive[0]}号艇（{most_passive[1]:.2f}）")
+
+    # 展示Fがある艇
+    f_boats = [str(b["boat_no"]) for b in bi_boats if b.get("st_exhibit", "").startswith("F")]
+    if f_boats:
+        lines.append(f"展示F: {', '.join(f_boats)}号艇（本番は慎重スタート傾向）")
+
+    # チルト+の艇（伸び足寄り）
+    plus_tilt = [
+        f"{b['boat_no']}号艇({b['tilt']})"
+        for b in bi_boats
+        if str(b.get("tilt", "")).startswith("+") or (
+            b.get("tilt", "0") not in ("", "-0.5", "0.0", "0") and
+            not str(b.get("tilt", "")).startswith("-")
+        )
+    ]
+    if plus_tilt:
+        lines.append(f"チルト+(伸び寄り): {', '.join(plus_tilt)}")
+
+    return "。".join(lines) + "。" if lines else "展示情報なし。"
+
+
+def _expert_upset(boats: list[dict], bi_boats: list[dict]) -> str:
+    """大穴専門家: F/L持ち・外枠好条件から波乱要因を洗い出す。"""
+    lines = []
+
+    # F/L持ち
+    fl_boats = []
+    for b in boats:
+        fl = _fmt_fl(b["f_count"], b["l_count"])
+        if fl:
+            fl_boats.append(f"{b['boat_no']}号艇({fl})")
+    if fl_boats:
+        lines.append(f"F/L持ち（スタート慎重傾向）: {', '.join(fl_boats)}")
+
+    # 外枠（4〜6号艇）でモーター好調かつ展示タイム上位
+    motor_rank = _rank_by(boats, "motor_rate", reverse=True)
+    exhibit_rank = _rank_by(bi_boats, "exhibit_time", reverse=False)
+    outer_threats = []
+    for b in boats:
+        if b["boat_no"] < 4:
+            continue
+        motor_pos = next((i + 1 for i, (n, _) in enumerate(motor_rank) if n == b["boat_no"]), 6)
+        ex_pos = next((i + 1 for i, (n, _) in enumerate(exhibit_rank) if n == b["boat_no"]), 6)
+        if motor_pos <= 2 or ex_pos <= 2:
+            outer_threats.append(
+                f"{b['boat_no']}号艇（モーター{motor_pos}位・展示{ex_pos}位）"
+            )
+    if outer_threats:
+        lines.append(f"外枠波乱候補: {', '.join(outer_threats)}")
+    else:
+        lines.append("外枠に突出した波乱要因はなし")
+
+    return "。".join(lines) + "。"
+
+
+def _expert_weather(beforeinfo: dict) -> str:
+    """天候専門家: 風速・波高・気象条件から展開への影響を評価。"""
+    wind_speed = beforeinfo.get("wind_speed", "0") or "0"
+    wind_dir = beforeinfo.get("wind_dir", "")
+    wave_height = beforeinfo.get("wave_height", "0") or "0"
+    temp = beforeinfo.get("temperature", "")
+    water_temp = beforeinfo.get("water_temp", "")
+
+    try:
+        ws = float(wind_speed)
+    except ValueError:
+        ws = 0.0
+    try:
+        wh = float(wave_height)
+    except ValueError:
+        wh = 0.0
+
+    lines = []
+    if ws <= 2:
+        lines.append(f"風速{ws}m・穏やかなコンディション。インが有利な標準的な展開が見込まれる")
+    elif ws <= 4:
+        lines.append(f"風速{ws}m・やや風あり。向かい風ならインに有利、追い風・横風なら差しが有効")
+    elif ws <= 7:
+        lines.append(f"風速{ws}m・風が強め。スタートが乱れやすくなり外枠の台頭に注意")
+    else:
+        lines.append(f"風速{ws}m・強風。荒れやすい条件。インの優位性が下がる可能性大")
+
+    if wh >= 10:
+        lines.append(f"波高{wh}cm・波が高め。回り足が重要になりチルト-の艇が有利")
+    elif wh >= 5:
+        lines.append(f"波高{wh}cm・やや波あり。操艇技術の差が出やすい")
+    else:
+        lines.append(f"波高{wh}cm・水面穏やか")
+
+    wind_comment = f"風向は{wind_dir}。" if wind_dir else ""
+    if temp:
+        wind_comment += f"気温{temp}℃・水温{water_temp}℃。"
+    if wind_comment:
+        lines.append(wind_comment.rstrip("。"))
+
+    return "。".join(lines) + "。"
+
+
+# ---- メイン関数 ----
 
 def build_prompt(
     racelist: dict,
     beforeinfo: dict,
     stats_by_racer: dict,
 ) -> str:
-    """
-    プロンプトを組み立てて返す。
+    boats = racelist.get("boats", [])
+    bi_boats = beforeinfo.get("boats", [])
+    exhibit_map = {b["boat_no"]: b for b in bi_boats}
+    jcd = racelist.get("jcd", "")
 
-    Parameters
-    ----------
-    racelist       : get_racelist() の返り値
-    beforeinfo     : get_beforeinfo() の返り値
-    stats_by_racer : {racer_id: get_racer_stats() の返り値}
-    """
-    # 展示情報を艇番で引けるようにする
-    exhibit_map = {b["boat_no"]: b for b in beforeinfo.get("boats", [])}
+    # 対象レース行
+    date_str = racelist.get("race_date", "")
+    if len(date_str) == 8:
+        date_display = f"{date_str[:4]}/{date_str[4:6]}/{date_str[6:]}"
+    else:
+        date_display = date_str
+    race_info_line = (
+        f"{date_display} {racelist.get('stadium', '')} "
+        f"{racelist.get('race_no', '')}R "
+        f"{racelist.get('race_name', '')}"
+    ).strip()
 
-    # ---- 出走表セクション ----
+    # 出走表セクション
     racelist_lines = []
-    for boat in racelist.get("boats", []):
-        bn = boat["boat_no"]
-        fl = _fmt_fl(boat["f_count"], boat["l_count"])
+    for b in boats:
+        fl = _fmt_fl(b["f_count"], b["l_count"])
         fl_suffix = f" {fl}" if fl else ""
         racelist_lines.append(
-            f"{bn}号艇: {boat['racer_name']} ({boat['grade']}) "
-            f"全国勝率{boat['national_rate']} "
-            f"当地勝率{boat['local_rate']} "
-            f"モーター連対率{boat['motor_rate']}%"
+            f"{b['boat_no']}号艇: {b['racer_name']} ({b['grade']}) "
+            f"全国勝率{b['national_rate']} "
+            f"当地勝率{b['local_rate']} "
+            f"モーター連対率{b['motor_rate']}%"
             f"{fl_suffix}"
         )
     racelist_section = "\n".join(racelist_lines)
 
-    # ---- 枠別成績セクション ----
+    # 枠別成績セクション
     frame_lines = []
-    for boat in racelist.get("boats", []):
-        bn = boat["boat_no"]
-        racer_stats = stats_by_racer.get(boat["racer_id"], {})
-        frame_stats = racer_stats.get("frame_stats", {})
-        frame_lines.append(
-            f"{bn}号艇: {_fmt_frame_stats(frame_stats, bn)}"
-        )
+    for b in boats:
+        rs = stats_by_racer.get(b["racer_id"], {})
+        fs = rs.get("frame_stats", {})
+        frame_lines.append(f"{b['boat_no']}号艇: {_fmt_frame_stats(fs, b['boat_no'])}")
     frame_stats_section = "\n".join(frame_lines)
 
-    # ---- 決まり手傾向セクション ----
+    # 決まり手傾向セクション
     technique_lines = []
-    for boat in racelist.get("boats", []):
-        bn = boat["boat_no"]
-        racer_stats = stats_by_racer.get(boat["racer_id"], {})
-        tech = racer_stats.get("technique_stats", {})
-        technique_lines.append(
-            f"{bn}号艇: {_fmt_technique(tech)}"
-        )
+    for b in boats:
+        rs = stats_by_racer.get(b["racer_id"], {})
+        ts = rs.get("technique_stats", {})
+        technique_lines.append(f"{b['boat_no']}号艇: {_fmt_technique(ts)}")
     technique_stats_section = "\n".join(technique_lines)
 
-    # ---- 展示情報セクション ----
+    # 展示情報セクション
     exhibit_lines = []
-    for boat in racelist.get("boats", []):
-        bn = boat["boat_no"]
-        ex = exhibit_map.get(bn, {})
+    for b in boats:
+        ex = exhibit_map.get(b["boat_no"], {})
         exhibit_lines.append(
-            f"{bn}号艇: "
+            f"{b['boat_no']}号艇: "
             f"展示タイム{ex.get('exhibit_time', '---')}秒 "
             f"チルト{ex.get('tilt', '---')} "
             f"ST展示{ex.get('st_exhibit', '---')}秒"
         )
     exhibit_section = "\n".join(exhibit_lines)
 
+    # 専門家コメント
+    expert_motor = _expert_motor(boats, bi_boats)
+    expert_stadium = _expert_stadium(boats, jcd)
+    expert_development = _expert_development(boats, stats_by_racer)
+    expert_session = _expert_session(boats)
+    expert_exhibit = _expert_exhibit(bi_boats)
+    expert_upset = _expert_upset(boats, bi_boats)
+    expert_weather = _expert_weather(beforeinfo)
+
     return PROMPT_TEMPLATE.format(
+        race_info_line=race_info_line,
         racelist_section=racelist_section,
         frame_stats_section=frame_stats_section,
         technique_stats_section=technique_stats_section,
@@ -205,4 +501,11 @@ def build_prompt(
         wind_speed=beforeinfo.get("wind_speed", "---"),
         water_temp=beforeinfo.get("water_temp", "---"),
         wave_height=beforeinfo.get("wave_height", "---"),
+        expert_motor=expert_motor,
+        expert_stadium=expert_stadium,
+        expert_development=expert_development,
+        expert_session=expert_session,
+        expert_exhibit=expert_exhibit,
+        expert_upset=expert_upset,
+        expert_weather=expert_weather,
     )

@@ -133,6 +133,16 @@ def get_racelist(jcd: str, date: str, rno: int) -> dict:
             lines = lineh2_tds[3].get_text("\n", strip=True).split("\n")
             motor_rate = lines[1] if len(lines) > 1 else ""
 
+        # 今節成績（is-fBold 行の着順リスト）
+        recent_results = []
+        result_row = tbody.find("tr", class_="is-fBold")
+        if result_row:
+            for td in result_row.find_all("td"):
+                a = td.find("a")
+                val = _text(a) if a else _text(td)
+                if val and val != "\xa0":
+                    recent_results.append(val)
+
         boats.append({
             "boat_no": boat_no,
             "racer_name": racer_name,
@@ -143,13 +153,21 @@ def get_racelist(jcd: str, date: str, rno: int) -> dict:
             "motor_rate": motor_rate,
             "f_count": f_count,
             "l_count": l_count,
+            "recent_results": recent_results,
         })
 
     boats.sort(key=lambda x: x["boat_no"])
+
+    # レース名（シリーズ名）
+    race_name_tag = soup.select_one(".heading2_titleName")
+    race_name = _text(race_name_tag) if race_name_tag else ""
+
     return {
         "stadium": STADIUM_MAP.get(jcd, jcd),
+        "jcd": jcd,
         "race_date": date,
         "race_no": rno,
+        "race_name": race_name,
         "boats": boats,
     }
 

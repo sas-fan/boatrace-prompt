@@ -128,7 +128,7 @@ if generate_btn:
         key="prompt_area",
     )
 
-    # コピーボタン（JavaScriptで実装）
+    # コピーボタン + Claude.aiを開くボタン（JavaScriptで実装）
     st.components.v1.html(
         f"""
         <button onclick="copyToClipboard()" style="
@@ -141,16 +141,35 @@ if generate_btn:
             font-size: 14px;
             margin-top: 4px;
         ">📋 クリップボードにコピー</button>
+        <button onclick="copyAndOpenClaude()" style="
+            background-color: #CC5500;
+            color: white;
+            padding: 8px 20px;
+            border: none;
+            border-radius: 6px;
+            cursor: pointer;
+            font-size: 14px;
+            margin-top: 4px;
+            margin-left: 8px;
+        ">🤖 コピー & Claude.aiを開く</button>
         <span id="copied_msg" style="
             color: green; margin-left: 12px; font-size: 13px; display: none;
         ">✅ コピーしました！</span>
         <script>
+        const promptText = {repr(prompt)};
         function copyToClipboard() {{
-            const text = {repr(prompt)};
-            navigator.clipboard.writeText(text).then(() => {{
+            navigator.clipboard.writeText(promptText).then(() => {{
                 const msg = document.getElementById('copied_msg');
                 msg.style.display = 'inline';
                 setTimeout(() => {{ msg.style.display = 'none'; }}, 2000);
+            }});
+        }}
+        function copyAndOpenClaude() {{
+            navigator.clipboard.writeText(promptText).then(() => {{
+                const msg = document.getElementById('copied_msg');
+                msg.style.display = 'inline';
+                setTimeout(() => {{ msg.style.display = 'none'; }}, 2000);
+                window.open('https://claude.ai/new', '_blank');
             }});
         }}
         </script>

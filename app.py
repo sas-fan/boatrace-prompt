@@ -8,7 +8,7 @@ from pathlib import Path
 import streamlit as st
 
 sys.path.insert(0, str(Path(__file__).parent))
-from src.scraper import get_racelist, get_beforeinfo, STADIUM_MAP
+from src.scraper import get_racelist, get_beforeinfo, get_odds3t, STADIUM_MAP
 from src.stats import load_stats, update_stats, build_stats, STATS_PATH
 from src.prompt_builder import build_prompt
 from src.stats import get_racer_stats
@@ -94,13 +94,17 @@ if generate_btn:
                 "boats": [],
             }
 
+        odds = get_odds3t(jcd, date_str, race_no)
+        if odds is None:
+            st.info("3連単オッズは未発売または取得できませんでした。オッズなしでプロンプトを生成します。")
+
     # 統計を各選手で取得
     stats_by_racer = {}
     for boat in racelist.get("boats", []):
         rid = boat["racer_id"]
         stats_by_racer[rid] = get_racer_stats(stats_df, rid)
 
-    prompt = build_prompt(racelist, beforeinfo, stats_by_racer)
+    prompt = build_prompt(racelist, beforeinfo, stats_by_racer, odds=odds)
 
     stadium_name = racelist.get("stadium", "")
     st.subheader(

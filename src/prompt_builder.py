@@ -83,6 +83,17 @@ PROMPT_TEMPLATE = """\
 ■ 天候専門家
 {expert_weather}
 
+【直前オッズ（3連単・120通り）】
+{odds_section}
+
+【期待値の考え方】
+- 期待値 = 推定的中確率(%) × オッズ ÷ 100
+- 期待値 > 1.0 → 購入推奨（理論上プラス収支）
+- 期待値 < 1.0 → 見送り推奨
+- 推奨買い目には「オッズXX倍・推定確率X%・期待値X.X」を必ず記載すること
+- オッズが低い（人気）買い目ほど的中確率が高くないと期待値がマイナスになることを意識すること
+- 高配当（オッズ50倍超）でも根拠のある波乱シナリオには価値がある
+
 【競艇の基本知識】
 競艇はインコース（内枠）が圧倒的に有利なスポーツです。
 - 1号艇の1着率は約50%、3連対率は約75%
@@ -416,10 +427,41 @@ def _expert_weather(beforeinfo: dict) -> str:
 
 # ---- メイン関数 ----
 
+def _build_odds_section(odds: dict | None) -> str:
+    """
+    120通りの3連単オッズを「1着固定ブロック」ごとに整形して返す。
+    odds が None のときは未取得メッセージを返す。
+    """
+    if odds is None:
+        return "（オッズ未発売または取得失敗）"
+
+    lines = []
+    for first in range(1, 7):
+        block = []
+        for second in range(1, 7):
+            if second == first:
+                continue
+            for third in range(1, 7):
+                if third == first or third == second:
+                    continue
+                combo = f"{first}-{second}-{third}"
+                val = odds.get(combo)
+                val_str = f"{val:.1f}" if val is not None else "---"
+                block.append(f"{combo}:{val_str}")
+        # 1着ブロックを4列で並べる
+        row_size = 4
+        for i in range(0, len(block), row_size):
+            lines.append("  ".join(block[i:i + row_size]))
+        lines.append("")  # ブロック間の空行
+
+    return "\n".join(lines).rstrip()
+
+
 def build_prompt(
     racelist: dict,
     beforeinfo: dict,
     stats_by_racer: dict,
+    odds: dict | None = None,
 ) -> str:
     boats = racelist.get("boats", [])
     bi_boats = beforeinfo.get("boats", [])
@@ -489,6 +531,9 @@ def build_prompt(
     expert_upset = _expert_upset(boats, bi_boats)
     expert_weather = _expert_weather(beforeinfo)
 
+    # オッズセクション
+    odds_section = _build_odds_section(odds)
+
     return PROMPT_TEMPLATE.format(
         race_info_line=race_info_line,
         racelist_section=racelist_section,
@@ -508,4 +553,5 @@ def build_prompt(
         expert_exhibit=expert_exhibit,
         expert_upset=expert_upset,
         expert_weather=expert_weather,
+        odds_section=odds_section,
     )

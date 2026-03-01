@@ -318,3 +318,53 @@ def get_beforeinfo(jcd: str, date: str, rno: int) -> dict:
         "wave_height": wave_height,
         "boats": boats,
     }
+
+
+def get_odds3t(jcd: str, date: str, rno: int) -> dict | None:
+    """
+    3連単オッズ（120通り）を取得する。
+
+    Returns
+    -------
+    dict: {"1-2-3": 16.7, "1-2-4": 9.7, ...} 形式。
+    未発売・取得失敗時は None を返す。
+
+    HTMLの並び順:
+      横方向（列）: 1着=1→2→3→4→5→6 の6列
+      縦方向（行）: 2着グループ(5)×3着(4) = 20行
+      全 td.oddsPoint を順に取得したとき:
+        idx番目の組番は g=(idx//24), r=((idx%24)//6), c=(idx%6) から導出
+    """
+    url = (
+        f"https://www.boatrace.jp/owpc/pc/race/odds3t"
+        f"?jcd={jcd}&hd={date}&rno={rno}"
+    )
+    try:
+        soup = _fetch(url)
+    except Exception:
+        return None
+
+    odds_tds = soup.select("td.oddsPoint")
+    if len(odds_tds) != 120:
+        return None  # 未発売または取得失敗
+
+    odds: dict[str, float | None] = {}
+    for idx, td in enumerate(odds_tds):
+        g = idx // 24         # 2着グループ (0〜4)
+        r = (idx % 24) // 6  # 3着行      (0〜3)
+        c = idx % 6           # 1着列      (0〜5)
+
+        first = c + 1
+        others = [x for x in range(1, 7) if x != first]
+        second = others[g]
+        thirds = [x for x in others if x != second]
+        third = thirds[r]
+
+        combo = f"{first}-{second}-{third}"
+        val = td.get_text(strip=True).replace(",", "")
+        try:
+            odds[combo] = float(val)
+        except ValueError:
+            odds[combo] = None
+
+    return odds

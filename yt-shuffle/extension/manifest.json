@@ -1,0 +1,62 @@
+{
+  "manifest_version": 3,
+  "name": "YT Shuffle - 登録チャンネル再発見",
+  "short_name": "YT Shuffle",
+  "version": "0.1.0",
+  "description": "登録チャンネルのまだ見ていない人気動画や、好みに近いチャンネルの人気動画をランダムに提案します。Chrome / Brave 対応。",
+  "minimum_chrome_version": "111",
+  "permissions": ["storage", "unlimitedStorage"],
+  "host_permissions": ["https://www.youtube.com/*"],
+  "background": {
+    "service_worker": "background.js"
+  },
+  "action": {
+    "default_title": "YT Shuffle を開く",
+    "default_icon": {
+      "16": "icons/icon16.png",
+      "32": "icons/icon32.png",
+      "48": "icons/icon48.png",
+      "128": "icons/icon128.png"
+    }
+  },
+  "icons": {
+    "16": "icons/icon16.png",
+    "32": "icons/icon32.png",
+    "48": "icons/icon48.png",
+    "128": "icons/icon128.png"
+  },
+  "options_ui": {
+    "page": "options/options.html",
+    "open_in_tab": true
+  },
+  "commands": {
+    "_execute_action": {
+      "suggested_key": { "default": "Alt+Shift+Y" },
+      "description": "YT Shuffle のパネルを開く / 閉じる"
+    }
+  },
+  "content_scripts": [
+    {
+      "matches": ["https://www.youtube.com/*"],
+      "js": ["content/page-hook.js"],
+      "world": "MAIN",
+      "run_at": "document_idle"
+    },
+    {
+      "matches": ["https://www.youtube.com/*"],
+      "js": [
+        "lib/util.js",
+        "lib/extract.js",
+        "lib/rss.js",
+        "lib/store.js",
+        "lib/recommend.js",
+        "content/yt-api.js",
+        "content/engine.js",
+        "content/tracker.js",
+        "content/panel-style.js",
+        "content/panel.js"
+      ],
+      "run_at": "document_idle"
+    }
+  ]
+}

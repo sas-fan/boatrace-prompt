@@ -1,0 +1,144 @@
+<!doctype html>
+<html lang="ja">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>YT Shuffle 設定</title>
+    <link rel="stylesheet" href="options.css" />
+  </head>
+  <body>
+    <main>
+      <header class="top">
+        <img src="../icons/icon128.png" alt="" width="48" height="48" />
+        <div>
+          <h1>YT Shuffle</h1>
+          <p class="sub">登録チャンネルの「まだ見ていない人気動画」と、好みに近いチャンネルを発見する拡張機能</p>
+        </div>
+      </header>
+
+      <section>
+        <h2>使い方</h2>
+        <ol class="steps">
+          <li>YouTube に<b>ログインした状態</b>で <a href="https://www.youtube.com/" target="_blank" rel="noopener">youtube.com</a> を開きます。</li>
+          <li>画面右下の <b>サイコロボタン</b>、ツールバーの拡張機能アイコン、または <kbd>Alt</kbd>+<kbd>Shift</kbd>+<kbd>Y</kbd> でパネルを開きます。初回は登録チャンネルと視聴履歴を自動で読み込みます。</li>
+          <li><b>「登録チャンネル」</b>タブ: 登録しているのに見ていないチャンネルから、人気の未視聴動画を選びます。<br />
+            <b>「近いチャンネル」</b>タブ: よく見るチャンネルに近い、まだ登録していないチャンネルの人気動画を選びます。</li>
+          <li><b>シャッフル</b>で候補を一覧表示、<b>おまかせ1本</b>ですぐ再生。気に入らない動画は × で今後出なくなります。</li>
+        </ol>
+        <p class="actions">
+          <button id="open-youtube" class="primary">YouTube を開いてパネルを表示</button>
+        </p>
+      </section>
+
+      <section>
+        <h2>データの状態</h2>
+        <dl class="stats" id="stats"></dl>
+        <p class="note">データはすべてこのブラウザの中（chrome.storage）に保存され、外部には送信されません。</p>
+      </section>
+
+      <section>
+        <h2>おすすめの設定</h2>
+        <form id="settings" class="settings" autocomplete="off">
+          <fieldset>
+            <legend>スコアの重み</legend>
+            <label class="range">
+              <span>人気（再生回数）の重視度</span>
+              <input type="range" name="popularityWeight" min="0" max="100" step="5" />
+              <output></output>
+            </label>
+            <label class="range">
+              <span>興味（視聴履歴のタイトルに近いか）の重視度</span>
+              <input type="range" name="interestWeight" min="0" max="100" step="5" />
+              <output></output>
+            </label>
+            <label class="range">
+              <span>ランダム度</span>
+              <input type="range" name="randomness" min="0" max="100" step="5" />
+              <output></output>
+            </label>
+          </fieldset>
+
+          <fieldset>
+            <legend>表示する動画</legend>
+            <label><span>表示する本数</span><input type="number" name="resultCount" min="5" max="60" /></label>
+            <label><span>1チャンネルあたりの最大本数</span><input type="number" name="maxPerChannel" min="1" max="5" /></label>
+            <label class="check"><input type="checkbox" name="excludeShorts" /><span>ショート動画を除外</span></label>
+            <label><span>最短の長さ（秒）</span><input type="number" name="minDurationSec" min="0" max="3600" /></label>
+            <label><span>最長の長さ（分・0で無制限）</span><input type="number" name="maxDurationMin" min="0" max="600" /></label>
+            <label><span>最低再生回数（0で無制限）</span><input type="number" name="minViews" min="0" step="1000" /></label>
+            <label><span>視聴済みとみなす再生割合（%）</span><input type="number" name="watchedThreshold" min="1" max="100" /></label>
+          </fieldset>
+
+          <fieldset>
+            <legend>登録チャンネル・シャッフル</legend>
+            <label><span>1回に調べる登録チャンネル数</span><input type="number" name="channelsPerShuffle" min="3" max="40" /></label>
+            <label><span>「ご無沙汰」とみなす日数</span><input type="number" name="neglectDays" min="7" max="1000" /></label>
+            <label class="check"><input type="checkbox" name="includeFrequent" /><span>よく見るチャンネルも少しだけ混ぜる</span></label>
+          </fieldset>
+
+          <fieldset>
+            <legend>近いチャンネル発見</legend>
+            <label><span>起点にする登録チャンネル数</span><input type="number" name="similarSeeds" min="1" max="12" /></label>
+            <label><span>人気動画まで調べるチャンネル数</span><input type="number" name="similarChannels" min="1" max="15" /></label>
+          </fieldset>
+
+          <fieldset>
+            <legend>同期・その他</legend>
+            <label><span>同期で読む視聴履歴のページ数</span><input type="number" name="historyPages" min="1" max="50" /></label>
+            <label><span>チャンネルの人気動画リストの保存日数</span><input type="number" name="cacheDays" min="1" max="30" /></label>
+            <label class="check"><input type="checkbox" name="showFab" /><span>YouTube 画面右下にサイコロボタンを表示</span></label>
+            <label class="check"><input type="checkbox" name="trackWatching" /><span>見た動画を自動で記録（視聴済み判定に使います）</span></label>
+          </fieldset>
+          <p class="actions">
+            <button type="button" id="reset-settings">初期値に戻す</button>
+            <span class="saved" id="saved" aria-live="polite"></span>
+          </p>
+        </form>
+      </section>
+
+      <section>
+        <h2>Google Takeout から取り込み（任意）</h2>
+        <p>
+          通常は YouTube から自動で読み込むので不要です。<b>何年も前の視聴履歴まで反映したい</b>ときや、自動読み込みがうまくいかないときに使ってください。
+        </p>
+        <ol class="steps small">
+          <li><a href="https://takeout.google.com/" target="_blank" rel="noopener">Google Takeout</a> で「すべて選択解除」→「YouTube と YouTube Music」だけを選択。</li>
+          <li>「複数の形式」で <b>履歴 を JSON</b> に変更（HTML のままでも取り込めます）。</li>
+          <li>ダウンロードした zip を展開し、下から <code>subscriptions.csv</code> と <code>watch-history.json</code> を選択。</li>
+        </ol>
+        <div class="imports">
+          <label class="file">
+            <span>登録チャンネル（subscriptions.csv）</span>
+            <input type="file" id="import-subs" accept=".csv,text/csv" />
+          </label>
+          <label class="file">
+            <span>視聴履歴（watch-history.json / .html）</span>
+            <input type="file" id="import-history" accept=".json,.html,application/json,text/html" />
+          </label>
+        </div>
+        <p class="result" id="import-result" aria-live="polite"></p>
+      </section>
+
+      <section>
+        <h2>非表示にしたもの</h2>
+        <div id="hidden-channels" class="hidden-list"></div>
+        <p class="actions">
+          <button type="button" id="clear-hidden-videos">非表示にした動画をすべて戻す</button>
+        </p>
+      </section>
+
+      <section class="danger">
+        <h2>データの削除</h2>
+        <p class="actions">
+          <button type="button" id="clear-watched">視聴記録を削除</button>
+          <button type="button" id="clear-all">すべてのデータを削除（設定は残す）</button>
+        </p>
+      </section>
+    </main>
+    <script src="../lib/util.js"></script>
+    <script src="../lib/rss.js"></script>
+    <script src="../lib/takeout.js"></script>
+    <script src="../lib/store.js"></script>
+    <script src="options.js"></script>
+  </body>
+</html>

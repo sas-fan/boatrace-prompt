@@ -28,6 +28,9 @@
     similarSeeds: 5, // 近いチャンネル探索で起点にする登録チャンネル数
     similarChannels: 6, // 近いチャンネルとして人気動画まで掘るチャンネル数
     cacheDays: 3, // チャンネル人気動画リストのキャッシュ日数
+    periodValue: 0, // 投稿日の期間（0 = すべての期間）
+    periodUnit: 'month', // hour / day / week / month / year
+    panelWidth: 720, // パネルの幅（px）
     showFab: true, // YouTube 画面右下の 🎲 ボタン
     trackWatching: true, // 視聴した動画を自動で記録
   };
@@ -132,7 +135,16 @@
     return (titles || []).map((x) => x[2]);
   }
 
-  // ---------- 人気動画キャッシュ ----------
+  // ---------- 動画リストのキャッシュ ----------
+  // kind: 'pop'（人気順）/ 'lat'（最新）/ 'feed'（登録チャンネルの新着）
+  async function getListCache(kind, id) {
+    const key = `${kind}_${id}`;
+    const data = await get(key);
+    return data[key] || null;
+  }
+  async function setListCache(kind, id, entry) {
+    await set({ [`${kind}_${id}`]: entry });
+  }
   async function getPopCache(channelIds) {
     const keys = channelIds.map((id) => 'pop_' + id);
     const data = await get(keys);
@@ -141,14 +153,14 @@
     return out;
   }
   async function setPopCache(channelId, entry) {
-    await set({ ['pop_' + channelId]: entry });
+    await setListCache('pop', channelId, entry);
   }
   async function allKeys() {
     if (typeof local().getKeys === 'function') return local().getKeys();
     return Object.keys(await get(null));
   }
   async function prunePopCache(maxAgeMs) {
-    const keys = (await allKeys()).filter((k) => k.startsWith('pop_'));
+    const keys = (await allKeys()).filter((k) => /^(pop|lat|feed)_/.test(k));
     if (!keys.length) return 0;
     const data = await get(keys);
     const now = Date.now();
@@ -249,6 +261,8 @@
     mergeWatched,
     mergeWatchedDirect,
     getTitles,
+    getListCache,
+    setListCache,
     getPopCache,
     setPopCache,
     prunePopCache,

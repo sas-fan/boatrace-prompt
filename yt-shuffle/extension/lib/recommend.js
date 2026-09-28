@@ -119,7 +119,29 @@
     if (v.duration != null && v.duration < settings.minDurationSec) return 'tooShort';
     if (settings.maxDurationMin > 0 && v.duration != null && v.duration > settings.maxDurationMin * 60) return 'tooLong';
     if (settings.minViews > 0 && v.views != null && v.views < settings.minViews) return 'fewViews';
+    if (ctx.periodMs) {
+      // 期間指定があるときは投稿日がわからない動画も外す
+      if (v.publishedAt == null) return 'unknownDate';
+      if ((ctx.now || Date.now()) - v.publishedAt > ctx.periodMs) return 'outOfPeriod';
+    }
     return null;
+  }
+
+  // 登録チャンネル・シャッフルで「あまり見ていないチャンネル」を優先するための加点
+  const KIND_AFFINITY = { unwatched: 1, few: 0.75, neglected: 0.6, frequent: 0.2 };
+  function kindAffinity(kind) {
+    return KIND_AFFINITY[kind] != null ? KIND_AFFINITY[kind] : 0.5;
+  }
+
+  // 候補のチャンネルごとの最大再生回数（チャンネル内での人気度の基準）
+  function assignChannelMax(cands) {
+    const max = new Map();
+    for (const c of cands) {
+      const k = channelKeyOf(c.channelId, c.channelName) || c.id;
+      if ((c.views || 0) > (max.get(k) || 0)) max.set(k, c.views);
+    }
+    for (const c of cands) c.channelMaxViews = max.get(channelKeyOf(c.channelId, c.channelName) || c.id) || 0;
+    return cands;
   }
 
   // ---------- スコアリング ----------
@@ -190,6 +212,8 @@
     pickSubscribedChannels,
     pickSeedChannels,
     exclusionReason,
+    kindAffinity,
+    assignChannelMax,
     popularity,
     scoreCandidates,
     diversify,

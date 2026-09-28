@@ -447,3 +447,57 @@ test('buildAuthHeader: SAPISIDHASH の形式', async () => {
   assert.equal(await YTS.api.buildAuthHeader({}, ts), null);
   assert.deepEqual(YTS.api.parseCookies('a=1; SAPISID=x%2Fy; b'), { a: '1', SAPISID: 'x/y' });
 });
+
+// ---------------------------------------------------------------- 投稿日・期間
+test('parseAge / publishedAt: 相対表記と ISO 日時', () => {
+  const D = U.DAY;
+  assert.equal(U.parseAge('3 年前'), 3 * 365 * D);
+  assert.equal(U.parseAge('2 週間前'), 14 * D);
+  assert.equal(U.parseAge('5 か月前'), 150 * D);
+  assert.equal(U.parseAge('5ヶ月前'), 150 * D);
+  assert.equal(U.parseAge('12 時間前'), 12 * 3600e3);
+  assert.equal(U.parseAge('30 分前'), 30 * 60e3);
+  assert.equal(U.parseAge('配信済み: 2 日前'), 2 * D);
+  assert.equal(U.parseAge('3 years ago'), 3 * 365 * D);
+  assert.equal(U.parseAge('Streamed 1 day ago'), D);
+  assert.equal(U.parseAge('前田チャンネル'), null);
+  const ref = Date.UTC(2026, 8, 28);
+  assert.equal(U.publishedAt('2 日前', ref), ref - 2 * D);
+  assert.equal(U.publishedAt('2023-05-01T09:00:00+00:00', ref), Date.parse('2023-05-01T09:00:00Z'));
+  assert.equal(U.publishedAt('', ref), null);
+});
+
+test('periodMs / periodLabel', () => {
+  assert.equal(U.periodMs(0, 'month'), null);
+  assert.equal(U.periodMs(24, 'hour'), U.DAY);
+  assert.equal(U.periodMs(1, 'week'), 7 * U.DAY);
+  assert.equal(U.periodMs(2, 'year'), 730 * U.DAY);
+  assert.equal(U.periodLabel(1, 'week'), '1週間以内');
+  assert.equal(U.periodLabel(3, 'month'), '3か月以内');
+  assert.equal(U.periodLabel(0, 'month'), 'すべての期間');
+});
+
+test('recommend: 期間外・投稿日不明の動画は除外', () => {
+  const now = Date.UTC(2026, 8, 28);
+  const ctx = {
+    settings: store.DEFAULT_SETTINGS,
+    watched: new Map(),
+    hidden: { videos: {}, channels: {} },
+    now,
+    periodMs: U.periodMs(1, 'week'),
+  };
+  const base = { id: F.vid(1), views: 1000, duration: 600 };
+  assert.equal(R.exclusionReason({ ...base, publishedAt: now - 3 * U.DAY }, ctx), null);
+  assert.equal(R.exclusionReason({ ...base, publishedAt: now - 8 * U.DAY }, ctx), 'outOfPeriod');
+  assert.equal(R.exclusionReason({ ...base, publishedAt: null }, ctx), 'unknownDate');
+  assert.equal(R.exclusionReason({ ...base, publishedAt: null }, { ...ctx, periodMs: null }), null);
+});
+
+test('recommend: assignChannelMax はチャンネルごとの最大再生回数', () => {
+  const list = R.assignChannelMax([
+    { id: 'a', channelId: 'X', views: 10 },
+    { id: 'b', channelId: 'X', views: 500 },
+    { id: 'c', channelId: null, channelName: 'Y', views: 7 },
+  ]);
+  assert.deepEqual(list.map((c) => c.channelMaxViews), [500, 500, 7]);
+});

@@ -85,6 +85,58 @@
     return `${Math.floor(h / 24)}日前`;
   }
 
+  // ---- 投稿日 ----
+  const UNIT_MS = {
+    second: 1000,
+    minute: 60 * 1000,
+    hour: 60 * 60 * 1000,
+    day: DAY,
+    week: 7 * DAY,
+    month: 30 * DAY,
+    year: 365 * DAY,
+  };
+  const JA_UNITS = { 秒: 'second', 分: 'minute', 時間: 'hour', 日: 'day', 週間: 'week', 週: 'week', か月: 'month', ヶ月: 'month', カ月: 'month', ヵ月: 'month', 箇月: 'month', 年: 'year' };
+
+  // 「3 年前」「2 週間前」「5 hours ago」「Streamed 2 days ago」→ 経過ミリ秒（下限）
+  function parseAge(text) {
+    if (!text) return null;
+    const s = normalizeDigits(text);
+    let m = s.match(/(\d+)\s*(秒|分|時間|日|週間|週|か月|ヶ月|カ月|ヵ月|箇月|年)\s*前/);
+    if (m) return parseInt(m[1], 10) * UNIT_MS[JA_UNITS[m[2]]];
+    m = s.match(/(\d+)\s*(second|minute|hour|day|week|month|year)s?\s+ago/i);
+    if (m) return parseInt(m[1], 10) * UNIT_MS[m[2].toLowerCase()];
+    return null;
+  }
+
+  // 投稿日時（ミリ秒）。ISO 形式ならそのまま、相対表記なら ref（取得時刻）から逆算する
+  function publishedAt(text, ref = Date.now()) {
+    if (!text) return null;
+    if (/^\d{4}-\d{2}-\d{2}T/.test(text)) {
+      const t = Date.parse(text);
+      return Number.isFinite(t) ? t : null;
+    }
+    const age = parseAge(text);
+    return age == null ? null : ref - age;
+  }
+
+  const PERIOD_UNITS = [
+    ['hour', '時間'],
+    ['day', '日'],
+    ['week', '週間'],
+    ['month', 'か月'],
+    ['year', '年'],
+  ];
+  function periodMs(value, unit) {
+    const v = Number(value);
+    if (!(v > 0) || !UNIT_MS[unit]) return null;
+    return v * UNIT_MS[unit];
+  }
+  function periodLabel(value, unit) {
+    const u = PERIOD_UNITS.find((x) => x[0] === unit);
+    if (!(Number(value) > 0) || !u) return 'すべての期間';
+    return `${value}${u[1]}以内`;
+  }
+
   function normName(s) {
     return String(s || '').normalize('NFKC').toLowerCase().replace(/\s+/g, '');
   }
@@ -198,6 +250,12 @@
     formatViews,
     formatDuration,
     formatAgo,
+    UNIT_MS,
+    parseAge,
+    publishedAt,
+    PERIOD_UNITS,
+    periodMs,
+    periodLabel,
     normName,
     tokenize,
     makeRng,

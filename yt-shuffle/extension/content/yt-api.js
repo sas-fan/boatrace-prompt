@@ -194,15 +194,48 @@
     } catch (e) {
       /* 次へ */
     }
+    const latest = await fetchLatest(channelId);
+    return { source: latest.source, videos: byViews(latest.videos) };
+  }
+
+  // チャンネルの最新動画（「動画」タブ 約 30 件 → だめなら RSS 15 件）。新しい順。
+  async function fetchLatest(channelId) {
+    const own = (vids) => vids.map((v) => Object.assign(v, { channelId }));
     try {
       const { data } = await getPage(`/channel/${channelId}/videos`);
       const vids = data ? X.collectVideos(data) : [];
-      if (vids.length) return { source: 'latest', videos: own(byViews(vids)) };
+      if (vids.length) return { source: 'latest', videos: own(vids) };
     } catch (e) {
       /* 次へ */
     }
     const feed = YTS.rss.parseFeed(await fetchText(`/feeds/videos.xml?channel_id=${channelId}`));
-    return { source: 'latest-rss', videos: own(byViews((feed && feed.videos) || [])) };
+    return { source: 'latest-rss', videos: own((feed && feed.videos) || []) };
+  }
+
+  // ---------- 登録チャンネルの新着フィード ----------
+  async function fetchSubscriptionFeed(maxPages = 5, onProgress) {
+    const { cfg, data } = await getPage('/feed/subscriptions');
+    assertLoggedIn(cfg, data);
+    if (!data) throw new Error('登録チャンネルの新着ページを読み取れませんでした');
+    const map = new Map();
+    X.collectVideos(data).forEach((v) => map.set(v.id, v));
+    let token = X.findContinuation(data);
+    let pages = 1;
+    if (onProgress) onProgress({ text: `登録チャンネルの新着を取得中… ${map.size}件` });
+    while (token && pages < maxPages) {
+      try {
+        const json = await innertube('browse', { continuation: token }, cfg);
+        const more = X.collectVideos(json);
+        if (!more.length) break;
+        more.forEach((v) => map.set(v.id, v));
+        token = X.findContinuation(json);
+        pages++;
+        if (onProgress) onProgress({ text: `登録チャンネルの新着を取得中… ${map.size}件` });
+      } catch (e) {
+        break;
+      }
+    }
+    return [...map.values()];
   }
 
   // ---------- 動画ページ（関連動画・投稿者） ----------
@@ -232,6 +265,8 @@
     fetchSubscriptions,
     fetchHistory,
     fetchPopular,
+    fetchLatest,
+    fetchSubscriptionFeed,
     fetchWatch,
   };
   YTS.api = api;

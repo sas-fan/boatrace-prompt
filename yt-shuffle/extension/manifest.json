@@ -2,7 +2,7 @@
   "manifest_version": 3,
   "name": "YT Shuffle - 登録チャンネル再発見",
   "short_name": "YT Shuffle",
-  "version": "0.1.0",
+  "version": "0.2.0",
   "description": "登録チャンネルのまだ見ていない人気動画や、好みに近いチャンネルの人気動画をランダムに提案します。Chrome / Brave 対応。",
   "minimum_chrome_version": "111",
   "permissions": ["storage", "unlimitedStorage"],

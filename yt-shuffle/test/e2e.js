@@ -54,6 +54,23 @@ function channelVideos(chId) {
     published: `${1 + (k % 5)} 年前`,
   }));
 }
+// 最新動画（投稿日が新しいもの）
+const RECENT_AGES = ['6 時間前', '3 日前', '12 日前', '2 か月前'];
+function recentVideos(chId) {
+  const ch = ALL_CH.get(chId);
+  const n = parseInt(chId.slice(2), 10);
+  const [g] = genreOf(chId);
+  return RECENT_AGES.map((age, k) => ({
+    id: F.vid(700000 + n * 10 + k),
+    title: `【新作】${g}の最新動画 ${n}-${k + 1}`,
+    channelId: chId,
+    channelName: ch.title,
+    handle: ch.handle,
+    views: 20000 * (4 - k) + n * 100,
+    duration: 480 + k * 60,
+    published: age,
+  }));
+}
 // よく見る登録チャンネル = 1〜5（履歴に出てくる）
 const HISTORY_SECTIONS = [
   { header: '今日', videos: [1, 2].flatMap((c) => channelVideos(F.cid(c)).slice(1, 4)) },
@@ -113,6 +130,14 @@ function routeYouTube(route) {
     const ch = ALL_CH.get(chId);
     if (!ch) return route.fulfill({ status: 404, body: '' });
     return route.fulfill({ status: 200, contentType: 'application/xml', body: F.rssFeed({ channelId: chId, title: ch.title, videos: channelVideos(chId).map((v) => ({ ...v, views: v.views + 1 })) }) });
+  }
+  let m;
+  if ((m = p.match(/^\/channel\/(UC[\w-]{22})\/videos$/)) && ALL_CH.has(m[1])) {
+    return htmlRes(F.html({ data: F.historyData([{ header: '動画', videos: recentVideos(m[1]), lockup: true }]) }));
+  }
+  if (p === '/feed/subscriptions') {
+    const vids = SUBS.slice(0, 12).map((c, i) => ({ ...recentVideos(c.id)[0], id: F.vid(800000 + i), title: `【新着】${c.title}の今日の動画`, published: `${i + 1} 時間前` }));
+    return htmlRes(F.html({ data: F.historyData([{ header: '今日', videos: vids, lockup: true }]) }));
   }
   if (p === '/watch') {
     const id = url.searchParams.get('v');
@@ -291,6 +316,74 @@ async function makeVideo(context) {
     await page.screenshot({ path: path.join(OUT, '2-similar-light.png') });
 
     // ダークテーマ
+    // 投稿日で絞り込む（1 週間以内）→ 自動で再シャッフル
+    await page.locator('#yt-shuffle-host .tab[data-mode="subs"]').click();
+    await page.locator('#yt-shuffle-host select.sel').first().selectOption('1w');
+    await page.waitForFunction(
+      () => /1週間以内/.test(document.querySelector('#yt-shuffle-host').shadowRoot.querySelector('.info').textContent),
+      null,
+      { timeout: 30000 }
+    );
+    await page.waitForFunction(() => !document.querySelector('#yt-shuffle-host').shadowRoot.querySelector('.btn.primary').disabled);
+    const periodCards = await page.locator('#yt-shuffle-host .card').evaluateAll((els) =>
+      els.map((e) => ({ title: e.querySelector('a.title').textContent, meta: [...e.querySelectorAll('.meta')].map((c) => c.textContent).join(' | ') }))
+    );
+    step(`投稿日「1週間以内」: ${periodCards.length} 本`);
+    console.log('   例:', periodCards.slice(0, 3).map((c) => `${c.title} ${c.meta}`).join('\n       '));
+    assert.ok(periodCards.length >= 5);
+    for (const c of periodCards) assert.match(c.meta, /(時間前|[1-7] 日前)/, '1 週間以内の動画だけ: ' + c.meta);
+    assert.ok(periodCards.some((c) => /【新着】/.test(c.title)), '新着フィードの動画も入る');
+
+    // カスタム期間（12 時間以内）
+    await page.locator('#yt-shuffle-host select.sel').first().selectOption('custom');
+    await page.locator('#yt-shuffle-host .custom input.num').fill('12');
+    await page.locator('#yt-shuffle-host .custom select.unit').selectOption('hour');
+    await page.waitForFunction(
+      () => /12時間以内/.test(document.querySelector('#yt-shuffle-host').shadowRoot.querySelector('.info').textContent),
+      null,
+      { timeout: 30000 }
+    );
+    await page.waitForFunction(() => !document.querySelector('#yt-shuffle-host').shadowRoot.querySelector('.btn.primary').disabled);
+    const hourMetas = await page.locator('#yt-shuffle-host .card .meta:nth-of-type(2)').allTextContents();
+    step(`投稿日「12時間以内」（カスタム）: ${hourMetas.length} 本`);
+    assert.ok(hourMetas.length > 0);
+    for (const t of hourMetas) {
+      const h = parseInt((t.match(/(\d+) 時間前/) || [])[1], 10);
+      assert.ok(h <= 12, t);
+    }
+
+    // パネルの幅: 既定 720px → ボタンで 960px、広いときはグリッド表示
+    const width0 = await page.locator('#yt-shuffle-host .panel').evaluate((e) => e.getBoundingClientRect().width);
+    assert.equal(Math.round(width0), 720);
+    await page.locator('#yt-shuffle-host .icon-btn[title^="パネルの幅"]').click();
+    const width1 = await page.locator('#yt-shuffle-host .panel').evaluate((e) => e.getBoundingClientRect().width);
+    assert.equal(Math.round(width1), 960);
+    const cols = await page.locator('#yt-shuffle-host .grid').evaluate((e) => getComputedStyle(e).gridTemplateColumns.split(' ').length);
+    assert.ok(cols >= 3, 'グリッドが複数列: ' + cols);
+    step(`パネルの幅: ${Math.round(width0)}px → ${Math.round(width1)}px（${cols} 列）`);
+    await page.screenshot({ path: path.join(OUT, '5-period-wide.png') });
+    // ドラッグで幅を変更（左端を 500px の位置へ）
+    const box = await page.locator('#yt-shuffle-host .resizer').boundingBox();
+    await page.mouse.move(box.x + box.width / 2, 400);
+    await page.mouse.down();
+    await page.mouse.move(500, 400, { steps: 5 });
+    await page.mouse.up();
+    const width2 = await page.locator('#yt-shuffle-host .panel').evaluate((e) => e.getBoundingClientRect().width);
+    assert.ok(Math.abs(width2 - 780) <= 6, 'ドラッグで幅が変わる: ' + width2);
+    const savedW = await sw.evaluate(async () => (await chrome.storage.local.get('settings')).settings.panelWidth);
+    assert.ok(Math.abs(savedW - 780) <= 6, '幅が保存される: ' + savedW);
+    step(`ドラッグで幅を変更: ${Math.round(width2)}px（保存: ${savedW}px）`);
+
+    // 期間を元に戻す
+    await page.locator('#yt-shuffle-host select.sel').first().selectOption('all');
+    await page.waitForFunction(
+      () => !/投稿日/.test(document.querySelector('#yt-shuffle-host').shadowRoot.querySelector('.info').textContent),
+      null,
+      { timeout: 30000 }
+    );
+    await page.waitForFunction(() => !document.querySelector('#yt-shuffle-host').shadowRoot.querySelector('.btn.primary').disabled);
+    await page.locator('#yt-shuffle-host .tab[data-mode="similar"]').click();
+
     await page.evaluate(() => document.documentElement.setAttribute('dark', ''));
     await page.waitForTimeout(300);
     await page.screenshot({ path: path.join(OUT, '3-similar-dark.png') });

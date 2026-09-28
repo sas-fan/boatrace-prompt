@@ -58,6 +58,46 @@ YTS.api = {
     calls.popular.push(chId);
     return { source: 'popular', videos: popularOf(chId) };
   },
+  async fetchLatest(chId) {
+    calls.latest = (calls.latest || []).concat(chId);
+    const n = parseInt(chId.slice(2), 10);
+    // 最新動画: 2 日前・5 日前・20 日前
+    return {
+      source: 'latest',
+      videos: [2, 5, 20].map((d, k) => ({
+        id: F.vid(50000 + n * 10 + k),
+        title: `新作 ${n}-${k}`,
+        channelId: chId,
+        channelName: `登録${n}`,
+        views: 1000 * (k + 1),
+        duration: 500,
+        published: `${d} 日前`,
+        live: false,
+        upcoming: false,
+        short: false,
+        members: false,
+        watched: null,
+      })),
+    };
+  },
+  async fetchSubscriptionFeed() {
+    calls.feed = (calls.feed || 0) + 1;
+    // 新着フィード: 登録 0〜11 の 1 日前の動画（チャンネル ID なしで名前だけのものも混ぜる）
+    return SUBS.map((c, i) => ({
+      id: F.vid(60000 + i),
+      title: `新着 ${i}`,
+      channelId: i % 3 === 0 ? null : c.id,
+      channelName: c.title,
+      views: 300 + i,
+      duration: 400,
+      published: '1 日前',
+      live: false,
+      upcoming: false,
+      short: false,
+      members: false,
+      watched: null,
+    }));
+  },
   async fetchWatch(videoId, { related } = {}) {
     calls.watch.push(videoId);
     const n = parseInt(videoId.slice(3), 10);
@@ -141,4 +181,34 @@ test('discoverSimilar: 未登録の近いチャンネルだけを出し、ID 不
   assert.equal(c101.id, F.cid(101));
   assert.ok(calls.popular.includes(F.cid(101)));
   assert.ok(calls.popular.includes(F.cid(100)));
+});
+
+test('期間指定（1 週間以内）: 人気順の古い動画は外れ、最新動画と新着フィードから選ぶ', async () => {
+  await chrome.storage.local.clear();
+  await engine.sync({ force: true });
+  await store.saveSettings({ channelsPerShuffle: 6, resultCount: 30, maxPerChannel: 3, periodValue: 1, periodUnit: 'week' });
+  const out = await engine.shuffleSubscribed({ rng: U.makeRng(11) });
+  assert.equal(out.period, '1週間以内');
+  assert.ok(out.feed > 0, '新着フィードを使った');
+  assert.ok(out.results.length > 0);
+  const now = Date.now();
+  for (const r of out.results) {
+    assert.ok(r.publishedAt != null && now - r.publishedAt <= 7 * U.DAY, `${r.title} は期間内`);
+    assert.ok(/^(新作|新着)/.test(r.title), r.title);
+  }
+  // 名前だけの新着（チャンネル ID なし）も登録チャンネルとして扱われる
+  assert.ok(out.results.some((r) => r.id === F.vid(60003)) || out.results.every((r) => r.channelId));
+  assert.ok(out.results.every((r) => r.channelId && r.channelId.startsWith('UC')));
+
+  // 近いチャンネル発見も期間で絞られる（関連動画は 2 年前なので、最新動画だけが残る）
+  const sim = await engine.discoverSimilar({ rng: U.makeRng(4) });
+  assert.equal(sim.period, '1週間以内');
+  assert.ok(sim.results.length > 0, '近いチャンネルの最新動画から選ばれる');
+  for (const r of sim.results) assert.ok(now - r.publishedAt <= 7 * U.DAY, r.title);
+
+  // 期間を戻すと人気順の古い動画も出る
+  await store.saveSettings({ periodValue: 0 });
+  const all = await engine.shuffleSubscribed({ rng: U.makeRng(11) });
+  assert.equal(all.period, null);
+  assert.ok(all.results.some((r) => /^(ラーメン|キャンプ)/.test(r.title)));
 });

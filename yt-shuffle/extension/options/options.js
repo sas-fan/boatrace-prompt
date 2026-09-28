@@ -41,6 +41,7 @@
     for (const el of form.elements) {
       if (!el.name) continue;
       if (el.type === 'checkbox') out[el.name] = el.checked;
+      else if (el.tagName === 'SELECT') out[el.name] = el.value;
       else if (el.value !== '') {
         const n = Number(el.value);
         if (!Number.isFinite(n)) continue;
@@ -52,6 +53,12 @@
     return out;
   }
   let saveTimer = null;
+  // パネル側で期間や幅を変えたときも表示を合わせる
+  chrome.storage.onChanged.addListener((changes, area) => {
+    if (area === 'local' && changes.settings && !form.contains(document.activeElement)) {
+      store.getSettings().then(fill);
+    }
+  });
   form.addEventListener('input', (e) => {
     updateOutput(e.target);
     clearTimeout(saveTimer);

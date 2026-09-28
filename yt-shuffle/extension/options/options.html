@@ -60,6 +60,17 @@
 
           <fieldset>
             <legend>表示する動画</legend>
+            <label class="period">
+              <span>投稿日の期間（0 ですべての期間）</span>
+              <input type="number" name="periodValue" min="0" max="999" />
+              <select name="periodUnit">
+                <option value="hour">時間以内</option>
+                <option value="day">日以内</option>
+                <option value="week">週間以内</option>
+                <option value="month">か月以内</option>
+                <option value="year">年以内</option>
+              </select>
+            </label>
             <label><span>表示する本数</span><input type="number" name="resultCount" min="5" max="60" /></label>
             <label><span>1チャンネルあたりの最大本数</span><input type="number" name="maxPerChannel" min="1" max="5" /></label>
             <label class="check"><input type="checkbox" name="excludeShorts" /><span>ショート動画を除外</span></label>
@@ -86,6 +97,7 @@
             <legend>同期・その他</legend>
             <label><span>同期で読む視聴履歴のページ数</span><input type="number" name="historyPages" min="1" max="50" /></label>
             <label><span>チャンネルの人気動画リストの保存日数</span><input type="number" name="cacheDays" min="1" max="30" /></label>
+            <label><span>パネルの幅（px・パネル左端のドラッグでも変更可）</span><input type="number" name="panelWidth" min="360" max="4000" step="10" /></label>
             <label class="check"><input type="checkbox" name="showFab" /><span>YouTube 画面右下にサイコロボタンを表示</span></label>
             <label class="check"><input type="checkbox" name="trackWatching" /><span>見た動画を自動で記録（視聴済み判定に使います）</span></label>
           </fieldset>

@@ -53,7 +53,7 @@ svg { flex: none; }
 
 .panel {
   position: fixed; top: 0; right: 0; bottom: 0; z-index: 2147483001;
-  width: min(440px, 100vw);
+  width: min(720px, 100vw);
   background: var(--bg); color: var(--fg);
   border-left: 1px solid var(--line); box-shadow: var(--shadow);
   display: flex; flex-direction: column;
@@ -61,6 +61,16 @@ svg { flex: none; }
   transition: transform 0.22s ease, visibility 0s linear 0.22s;
 }
 .panel.open { transform: none; visibility: visible; transition: transform 0.22s ease; }
+.panel.resizing { transition: none; user-select: none; }
+.resizer {
+  position: absolute; left: -5px; top: 0; bottom: 0; width: 10px; z-index: 1;
+  cursor: ew-resize; touch-action: none;
+}
+.resizer::after {
+  content: ""; position: absolute; left: 3px; top: 50%; width: 4px; height: 48px; margin-top: -24px;
+  border-radius: 2px; background: var(--bg3); opacity: 0; transition: opacity 0.15s;
+}
+.resizer:hover::after, .panel.resizing .resizer::after { opacity: 1; }
 
 .hd { display: flex; align-items: center; gap: 4px; padding: 12px 10px 8px 16px; }
 .brand { display: flex; align-items: center; gap: 8px; font-size: 18px; font-weight: 700; }
@@ -95,6 +105,17 @@ svg { flex: none; }
 .btn.ghost:hover { background: var(--bg2); }
 .btn:disabled { opacity: 0.5; cursor: default; filter: none; }
 
+.filters { display: flex; flex-wrap: wrap; align-items: center; gap: 6px; padding: 8px 16px 0; }
+.flabel { font-size: 12.5px; font-weight: 500; color: var(--fg2); margin-right: 2px; }
+.sel, .num {
+  height: 30px; padding: 0 8px; border-radius: 8px; border: 1px solid var(--line);
+  background: var(--bg2); color: var(--fg); font: inherit; font-size: 13px;
+}
+.sel:hover, .num:hover { background: var(--bg3); }
+.num { width: 64px; }
+.custom { display: inline-flex; align-items: center; gap: 6px; }
+.custom[hidden] { display: none; }
+.suffix { font-size: 13px; color: var(--fg2); }
 .status { padding: 6px 16px 0; font-size: 12px; color: var(--fg2); }
 .progress { padding: 8px 16px 0; display: none; }
 .progress.on { display: block; }
@@ -120,7 +141,8 @@ svg { flex: none; }
 .chan { flex: none; padding: 5px 10px; border-radius: 16px; background: var(--blue-soft); color: var(--blue); font-size: 12px; white-space: nowrap; }
 .chan:hover { filter: brightness(1.1); text-decoration: underline; }
 
-.list { flex: 1; overflow-y: auto; padding: 4px 8px 12px; scrollbar-width: thin; }
+.list { flex: 1; overflow-y: auto; padding: 4px 8px 12px; scrollbar-width: thin; container-type: inline-size; }
+.grid { display: grid; grid-template-columns: 1fr; gap: 2px; }
 .card {
   position: relative; display: grid; grid-template-columns: 168px 1fr; gap: 10px;
   padding: 8px; border-radius: 10px;
@@ -180,7 +202,15 @@ svg { flex: none; }
 }
 .link:hover { color: var(--fg); }
 
-@media (max-width: 520px) {
+/* 幅が広いときはサムネイルを上に置いたグリッド表示 */
+@container (min-width: 600px) {
+  .grid { grid-template-columns: repeat(auto-fill, minmax(240px, 1fr)); gap: 6px 4px; }
+  .card { grid-template-columns: 1fr; gap: 8px; align-content: start; }
+  .thumb { width: 100%; }
+  .title { margin-right: 0; font-size: 15px; }
+  .acts { top: 14px; right: 14px; flex-direction: row; }
+}
+@container (max-width: 400px) {
   .card { grid-template-columns: 128px 1fr; }
   .thumb { width: 128px; }
 }

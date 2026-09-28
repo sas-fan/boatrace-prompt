@@ -22,6 +22,8 @@
       watched,
       hidden,
       recent,
+      now: Date.now(),
+      periodMs: U.periodMs(settings.periodValue, settings.periodUnit),
       stats: R.channelStats(watched),
       profile: R.buildProfile(titles),
     };
@@ -87,15 +89,16 @@
     );
   }
 
-  function compact(v, channel) {
+  function compact(v, channel, ref) {
     return {
       id: v.id,
       title: v.title,
-      channelId: channel.id,
+      channelId: channel.id || v.channelId || null,
       channelName: v.channelName || channel.title || '',
       views: v.views,
       duration: v.duration,
       published: v.published,
+      publishedAt: v.publishedAt != null ? v.publishedAt : U.publishedAt(v.published, ref),
       live: v.live,
       upcoming: v.upcoming,
       short: v.short,
@@ -103,20 +106,55 @@
     };
   }
 
-  async function getPopular(channel, ctx) {
-    const cached = (await store.getPopCache([channel.id]))[channel.id];
-    if (cached && Date.now() - cached.t < ctx.settings.cacheDays * U.DAY) return cached;
-    const res = await api.fetchPopular(channel.id);
-    captureWatched(res.videos, ctx);
-    const entry = { t: Date.now(), source: res.source, videos: res.videos.slice(0, 40).map((v) => compact(v, channel)) };
-    await store.setPopCache(channel.id, entry);
+  // 古いキャッシュ（投稿日時の計算前に保存したもの）にも投稿日時を補う
+  function withDates(entry) {
+    for (const v of entry.videos) {
+      if (v.publishedAt == null && v.published) v.publishedAt = U.publishedAt(v.published, entry.t);
+    }
     return entry;
   }
 
-  function maxViews(vids) {
-    let m = 0;
-    for (const v of vids) if ((v.views || 0) > m) m = v.views;
-    return m;
+  // チャンネルの動画リスト（kind: 'pop' = 人気順 / 'lat' = 最新）をキャッシュ付きで取得
+  const LIST_TTL = { pop: (s) => s.cacheDays * U.DAY, lat: () => 3 * HOUR };
+  async function getList(kind, channel, ctx) {
+    const cached = await store.getListCache(kind, channel.id);
+    if (cached && Date.now() - cached.t < LIST_TTL[kind](ctx.settings)) return withDates(cached);
+    const res = kind === 'pop' ? await api.fetchPopular(channel.id) : await api.fetchLatest(channel.id);
+    captureWatched(res.videos, ctx);
+    const now = Date.now();
+    const entry = { t: now, source: res.source, videos: res.videos.slice(0, 40).map((v) => compact(v, channel, now)) };
+    await store.setListCache(kind, channel.id, entry);
+    return entry;
+  }
+  const getPopular = (channel, ctx) => getList('pop', channel, ctx);
+
+  // 期間指定があるときは「人気順」に加えて「最新」も見る（最近の動画は人気順リストに入りにくいため）
+  async function getChannelVideos(channel, ctx) {
+    const pop = await getList('pop', channel, ctx);
+    const out = pop.videos.map((v, i) => Object.assign({}, v, { rank: pop.source.startsWith('popular') ? i + 1 : null }));
+    if (ctx.periodMs) {
+      try {
+        const lat = await getList('lat', channel, ctx);
+        const seen = new Set(out.map((v) => v.id));
+        for (const v of lat.videos) if (!seen.has(v.id)) out.push(Object.assign({}, v, { rank: null }));
+      } catch (e) {
+        /* 最新が取れなくても人気順だけで続行 */
+      }
+    }
+    return out;
+  }
+
+  // 登録チャンネルの新着フィード（短い期間を指定したとき用）。30 分キャッシュ。
+  async function getSubsFeed(ctx, onProgress) {
+    const pages = ctx.periodMs <= 2 * U.DAY ? 2 : ctx.periodMs <= 8 * U.DAY ? 4 : 8;
+    const cached = await store.getListCache('feed', 'subs');
+    if (cached && cached.pages >= pages && Date.now() - cached.t < 30 * 60 * 1000) return withDates(cached);
+    const vids = await api.fetchSubscriptionFeed(pages, onProgress);
+    captureWatched(vids, ctx);
+    const now = Date.now();
+    const entry = { t: now, pages, source: 'feed', videos: vids.slice(0, 400).map((v) => compact(v, {}, now)) };
+    await store.setListCache('feed', 'subs', entry);
+    return entry;
   }
 
   // ---------- 登録チャンネル・シャッフル ----------
@@ -131,30 +169,52 @@
     let done = 0;
     onProgress({ text: `登録チャンネルを調べています… 0/${picks.length}`, done: 0, total: picks.length });
     const lists = await U.mapLimit(picks, 4, async (p) => {
-      const e = await getPopular(p.channel, ctx);
+      const videos = await getChannelVideos(p.channel, ctx);
       done++;
       onProgress({ text: `登録チャンネルを調べています… ${done}/${picks.length}`, done, total: picks.length });
-      return { p, e };
+      return { p, videos };
     });
 
-    const cands = [];
-    for (const item of lists) {
-      if (!item || !item.e) continue;
-      const { p, e } = item;
-      const max = maxViews(e.videos);
-      e.videos.forEach((v, rank) => {
-        const c = Object.assign({}, v, {
-          channelId: p.channel.id,
-          channelName: v.channelName || p.channel.title,
-          channelMaxViews: max,
-          rank: e.source.startsWith('popular') ? rank + 1 : null,
-          reason: p.reason,
-          kind: p.kind,
-        });
-        if (!R.exclusionReason(c, ctx)) cands.push(c);
+    const cands = new Map();
+    const add = (v, ch, info) => {
+      if (cands.has(v.id)) return;
+      const c = Object.assign({}, v, {
+        channelId: ch.id,
+        channelName: v.channelName || ch.title,
+        reason: info.reason,
+        kind: info.kind,
+        affinity: R.kindAffinity(info.kind),
       });
+      if (!R.exclusionReason(c, ctx)) cands.set(v.id, c);
+    };
+    for (const item of lists) {
+      if (!item) continue;
+      for (const v of item.videos) add(v, item.p.channel, item.p);
     }
-    const scored = R.scoreCandidates(cands, { profile: ctx.profile, settings: ctx.settings, rng });
+
+    // 短い期間（1 か月以内）なら、登録チャンネル全体の新着フィードからも拾う
+    let feedCount = 0;
+    if (ctx.periodMs && ctx.periodMs <= 31 * U.DAY) {
+      try {
+        const feed = await getSubsFeed(ctx, onProgress);
+        const byId = new Map(ctx.subs.channels.map((c) => [c.id, c]));
+        const byName = new Map(ctx.subs.channels.map((c) => [U.normName(c.title), c]));
+        const hiddenCh = ctx.hidden.channels;
+        for (const v of feed.videos) {
+          const ch = (v.channelId && byId.get(v.channelId)) || byName.get(U.normName(v.channelName));
+          if (!ch || hiddenCh[ch.id]) continue;
+          const cw = R.subscribedChannelWeight(R.statsForChannel(ctx.stats, ch), ctx.settings, ctx.now);
+          if (!(cw.w > 0)) continue;
+          add(Object.assign({}, v, { rank: null }), ch, cw);
+          feedCount++;
+        }
+      } catch (e) {
+        if (e.code === 'NOT_LOGGED_IN') throw e;
+      }
+    }
+
+    const list = R.assignChannelMax([...cands.values()]);
+    const scored = R.scoreCandidates(list, { profile: ctx.profile, settings: ctx.settings, rng });
     const results = R.diversify(scored, ctx.settings.maxPerChannel, ctx.settings.resultCount);
     await store.pushRecent({ channels: picks.map((p) => p.channel.id) });
     const out = {
@@ -162,6 +222,8 @@
       at: Date.now(),
       results,
       checked: picks.length,
+      feed: feedCount,
+      period: ctx.periodMs ? U.periodLabel(ctx.settings.periodValue, ctx.settings.periodUnit) : null,
       terms: R.topTerms(ctx.profile, 8),
     };
     await store.saveLast('subs', out);
@@ -206,6 +268,8 @@
     let done = 0;
     const relLists = await U.mapLimit(seedVideos, 3, async (sv) => {
       const w = await api.fetchWatch(sv.id, { related: true });
+      const now = Date.now();
+      for (const v of w.related) v.publishedAt = U.publishedAt(v.published, now);
       done++;
       onProgress({ text: `関連動画を調べています… ${done}/${seedVideos.length}`, done, total: seedVideos.length });
       return { sv, related: w.related };
@@ -257,9 +321,7 @@
         }
       }
       if (!a.id || hiddenCh.has(a.id)) return;
-      const e = await getPopular({ id: a.id, title: a.name }, ctx);
-      a.popular = e.videos;
-      a.popularSource = e.source;
+      a.popular = await getChannelVideos({ id: a.id, title: a.name }, ctx);
       done++;
       onProgress({ text: `見つかったチャンネルの人気動画を調べています… ${done}/${top.length}`, done, total: top.length });
     });
@@ -273,18 +335,13 @@
       const affinity = (a.seeds.size / maxSeeds) * 0.7 + Math.min(1, a.count / 6) * 0.3;
       const names = [...a.seeds.values()];
       const reason = `「${names[0]}」${names.length > 1 ? `ほか${names.length - 1}ch` : ''}に近い`;
-      const popular = (a.popular || []).map((v, i) =>
-        Object.assign({}, v, { rank: a.popularSource && a.popularSource.startsWith('popular') ? i + 1 : null })
-      );
-      const all = [...a.videos.values(), ...popular];
-      const max = maxViews(all);
+      const all = [...(a.popular || []), ...a.videos.values()];
       for (const v of all) {
         if (cands.has(v.id)) continue;
         const c = Object.assign({}, v, {
           channelId: v.channelId || a.id,
           channelName: v.channelName || a.name,
           handle: v.handle || a.handle,
-          channelMaxViews: max,
           affinity,
           reason,
           kind: 'similar',
@@ -292,7 +349,7 @@
         if (!R.exclusionReason(c, ctx)) cands.set(v.id, c);
       }
     }
-    const scored = R.scoreCandidates([...cands.values()], { profile: ctx.profile, settings, rng });
+    const scored = R.scoreCandidates(R.assignChannelMax([...cands.values()]), { profile: ctx.profile, settings, rng });
     const results = R.diversify(scored, settings.maxPerChannel, settings.resultCount);
     const channels = ranked
       .filter((a) => !a.subscribed && !(a.id && hiddenCh.has(a.id)))
@@ -305,6 +362,7 @@
       results,
       channels,
       seeds: seeds.map((s) => s.channel.title),
+      period: ctx.periodMs ? U.periodLabel(settings.periodValue, settings.periodUnit) : null,
       terms: R.topTerms(ctx.profile, 8),
     };
     await store.saveLast('similar', out);

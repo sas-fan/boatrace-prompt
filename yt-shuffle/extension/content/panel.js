@@ -48,6 +48,7 @@
       'M12 2a10 10 0 1 0 0 20 10 10 0 0 0 0-20zM4 12a8 8 0 0 1 12.9-6.31L5.69 16.9A7.9 7.9 0 0 1 4 12zm8 8a7.9 7.9 0 0 1-4.9-1.69L18.31 7.1A8 8 0 0 1 12 20z',
     compass:
       'M12 10.9a1.1 1.1 0 1 0 0 2.2 1.1 1.1 0 0 0 0-2.2zM12 2a10 10 0 1 0 0 20 10 10 0 0 0 0-20zm2.19 12.19L6 18l3.81-8.19L18 6z',
+    width: 'M8 7l-5 5 5 5v-4h8v4l5-5-5-5v4H8z',
     subs:
       'M10 18v-6l5 3-5 3zm7-15H7v1h10V3zm3 3H4v1h16V6zm2 3H2v12h20V9zM3 10h18v10H3V10z',
   };
@@ -119,6 +120,33 @@
   els.luckyBtn = h('button', { class: 'btn', title: '候補からスコアの高い 1 本をすぐ再生', onclick: () => runLucky() }, icon('play', 18), 'おまかせ1本');
   els.syncBtn = h('button', { class: 'btn ghost', title: '登録チャンネルと視聴履歴を読み込み直す', onclick: () => runSync() }, icon('refresh', 18), '同期');
   els.status = h('div', { class: 'status' });
+
+  // 投稿日の期間フィルタ
+  const PERIOD_PRESETS = [
+    ['all', 'すべての期間', 0, 'month'],
+    ['24h', '24時間以内', 24, 'hour'],
+    ['3d', '3日以内', 3, 'day'],
+    ['1w', '1週間以内', 1, 'week'],
+    ['1m', '1か月以内', 1, 'month'],
+    ['3m', '3か月以内', 3, 'month'],
+    ['6m', '半年以内', 6, 'month'],
+    ['1y', '1年以内', 1, 'year'],
+    ['3y', '3年以内', 3, 'year'],
+    ['custom', '期間を指定…', null, null],
+  ];
+  els.periodSel = h(
+    'select',
+    { class: 'sel', title: '投稿日で絞り込む', onchange: onPresetChange },
+    PERIOD_PRESETS.map(([key, label]) => h('option', { value: key }, label))
+  );
+  els.periodNum = h('input', { class: 'num', type: 'number', min: 1, max: 999, step: 1, title: '数値', onchange: onCustomChange });
+  els.periodUnit = h(
+    'select',
+    { class: 'sel unit', title: '単位', onchange: onCustomChange },
+    U.PERIOD_UNITS.map(([key, label]) => h('option', { value: key }, label))
+  );
+  els.periodCustom = h('span', { class: 'custom' }, els.periodNum, els.periodUnit, h('span', { class: 'suffix' }, '以内'));
+  els.filters = h('div', { class: 'filters' }, h('span', { class: 'flabel' }, '投稿日'), els.periodSel, els.periodCustom);
   els.bar = h('div', { class: 'bar indet' }, h('i'));
   els.ptext = h('span', { class: 'ptext' });
   els.progress = h('div', { class: 'progress' }, els.bar, els.ptext);
@@ -128,20 +156,24 @@
   els.list = h('div', { class: 'list' });
   els.diag = h('pre', { class: 'diag' });
 
+  els.resizer = h('div', { class: 'resizer', title: 'ドラッグで幅を変更' });
   els.panel = h(
     'aside',
     { class: 'panel', role: 'dialog', 'aria-label': 'YT Shuffle' },
+    els.resizer,
     h(
       'header',
       { class: 'hd' },
       h('div', { class: 'brand' }, dice(24), 'YT Shuffle'),
       h('div', { class: 'spacer' }),
+      h('button', { class: 'icon-btn', title: 'パネルの幅を切り替え（左端のドラッグでも変更できます）', onclick: cycleWidth }, icon('width')),
       h('button', { class: 'icon-btn', title: '設定・インポート', onclick: openOptions }, icon('gear')),
       h('button', { class: 'icon-btn', title: '閉じる（Esc）', onclick: () => close() }, icon('close'))
     ),
     h('nav', { class: 'tabs', role: 'tablist' }, els.tabs),
     els.desc,
     h('div', { class: 'actions' }, els.shuffleBtn, els.luckyBtn, els.syncBtn),
+    els.filters,
     els.status,
     els.progress,
     els.error,
@@ -177,16 +209,90 @@
   function updateFab() {
     els.fab.hidden = !showFab || state.open || !!document.fullscreenElement;
   }
-  store.getSettings().then((s) => {
+  function applySettings(s) {
     showFab = s.showFab !== false;
     updateFab();
-  });
+    setPanelWidth(s.panelWidth, false);
+    renderPeriod(s);
+  }
+  store.getSettings().then(applySettings);
   chrome.storage.onChanged.addListener((changes, area) => {
     if (area === 'local' && changes.settings) {
-      showFab = (changes.settings.newValue || {}).showFab !== false;
-      updateFab();
+      applySettings(Object.assign({}, store.DEFAULT_SETTINGS, changes.settings.newValue || {}));
     }
   });
+
+  // ---------- パネルの幅 ----------
+  const MIN_WIDTH = 360;
+  const WIDTH_STEPS = [480, 720, 960, 1280];
+  let panelWidth = store.DEFAULT_SETTINGS.panelWidth;
+  function setPanelWidth(w, save) {
+    panelWidth = Math.round(U.clamp(Number(w) || store.DEFAULT_SETTINGS.panelWidth, MIN_WIDTH, 4000));
+    els.panel.style.width = Math.min(panelWidth, window.innerWidth) + 'px';
+    if (save) store.saveSettings({ panelWidth });
+  }
+  function cycleWidth() {
+    const max = window.innerWidth;
+    const cur = Math.min(panelWidth, max);
+    const next = WIDTH_STEPS.find((x) => x > cur + 10 && x <= max) || (cur < max - 10 ? max : WIDTH_STEPS[0]);
+    setPanelWidth(next, true);
+  }
+  window.addEventListener('resize', () => setPanelWidth(panelWidth, false));
+  els.resizer.addEventListener('pointerdown', (e) => {
+    e.preventDefault();
+    els.resizer.setPointerCapture(e.pointerId);
+    els.panel.classList.add('resizing');
+    const move = (ev) => setPanelWidth(U.clamp(window.innerWidth - ev.clientX, MIN_WIDTH, window.innerWidth), false);
+    const up = () => {
+      els.resizer.removeEventListener('pointermove', move);
+      els.resizer.removeEventListener('pointerup', up);
+      els.resizer.removeEventListener('pointercancel', up);
+      els.panel.classList.remove('resizing');
+      store.saveSettings({ panelWidth });
+    };
+    els.resizer.addEventListener('pointermove', move);
+    els.resizer.addEventListener('pointerup', up);
+    els.resizer.addEventListener('pointercancel', up);
+  });
+
+  // ---------- 期間フィルタ ----------
+  let customMode = false;
+  function renderPeriod(s) {
+    const v = Number(s.periodValue) || 0;
+    const preset = PERIOD_PRESETS.find(([, , pv, pu]) => pv === 0 ? v === 0 : pv === v && pu === s.periodUnit);
+    const key = customMode && v > 0 ? 'custom' : preset ? preset[0] : 'custom';
+    els.periodSel.value = key;
+    els.periodCustom.hidden = key !== 'custom';
+    if (els.periodNum !== shadow.activeElement) els.periodNum.value = v > 0 ? v : 2;
+    els.periodUnit.value = s.periodUnit || 'week';
+  }
+  async function onPresetChange() {
+    const p = PERIOD_PRESETS.find((x) => x[0] === els.periodSel.value);
+    if (p[0] === 'custom') {
+      customMode = true;
+      els.periodCustom.hidden = false;
+      await onCustomChange();
+      els.periodNum.focus();
+      return;
+    }
+    customMode = false;
+    await store.saveSettings({ periodValue: p[2], periodUnit: p[3] });
+    reshuffleForFilter();
+  }
+  async function onCustomChange() {
+    const v = Math.round(U.clamp(Number(els.periodNum.value) || 1, 1, 999));
+    els.periodNum.value = v;
+    await store.saveSettings({ periodValue: v, periodUnit: els.periodUnit.value });
+    reshuffleForFilter();
+  }
+  // 期間を変えたら、今のタブをシャッフルし直す
+  let filterTimer = null;
+  function reshuffleForFilter() {
+    clearTimeout(filterTimer);
+    filterTimer = setTimeout(() => {
+      if (state.open && !state.busy) runShuffle();
+    }, 400);
+  }
   document.addEventListener('fullscreenchange', updateFab);
 
   document.addEventListener('keydown', (e) => {
@@ -392,6 +498,8 @@
     const info = [];
     if (d.mode === 'subs') info.push(`${d.checked}チャンネルを調べて ${d.results.length}本を選びました`);
     else info.push(`「${(d.seeds || []).slice(0, 3).join('」「')}」などを起点に ${d.results.length}本を選びました`);
+    if (d.mode === 'subs' && d.feed) info[0] = info[0].replace('チャンネルを調べて', 'チャンネル＋新着フィードを調べて');
+    if (d.period) info.push(`［投稿日: ${d.period}］`);
     info.push(`（${U.formatAgo(d.at)}）`);
     els.info.replaceChildren(
       info.join(''),
@@ -419,10 +527,14 @@
     }
 
     if (!d.results.length) {
-      showEmptyList('条件に合う未視聴の動画が見つかりませんでした。もう一度シャッフルするか、設定で条件をゆるめてください。');
+      showEmptyList(
+        d.period
+          ? `投稿日が${d.period}の未視聴の動画が見つかりませんでした。期間を広げるか、もう一度シャッフルしてください。`
+          : '条件に合う未視聴の動画が見つかりませんでした。もう一度シャッフルするか、設定で条件をゆるめてください。'
+      );
       return;
     }
-    els.list.replaceChildren(...d.results.map(card));
+    els.list.replaceChildren(h('div', { class: 'grid' }, d.results.map(card)));
     els.list.scrollTop = 0;
   }
   function showEmptyList(text) {

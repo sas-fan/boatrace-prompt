@@ -12,6 +12,7 @@
       ['視聴済みとして記録', `${s.watched.toLocaleString()} 本`],
       ['視聴履歴の同期', U.formatAgo(s.historySyncedAt)],
       ['非表示', `動画 ${s.hiddenVideos} 本 / チャンネル ${s.hiddenChannels} 件`],
+      ['スキップ中', `${s.skipped} 本`],
     ];
     $('#stats').replaceChildren(
       ...rows.flatMap(([k, v]) => {
@@ -144,7 +145,13 @@
       );
     }
     $('#clear-hidden-videos').textContent = `非表示にした動画をすべて戻す（${Object.keys(h.videos).length} 本）`;
+    $('#clear-skips').textContent = `スキップした動画をすべて戻す（${store.activeSkipCount(h)} 本）`;
   }
+  $('#clear-skips').addEventListener('click', async () => {
+    await store.clearSkips();
+    renderHidden();
+    renderStats();
+  });
   $('#clear-hidden-videos').addEventListener('click', async () => {
     await store.clearHiddenVideos();
     renderHidden();

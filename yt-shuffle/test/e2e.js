@@ -284,12 +284,36 @@ async function makeVideo(context) {
     console.log('   例:', subsCards.slice(0, 3).map((c) => `${c.title} [${c.chips.join(', ')}] ${c.meta}`).join('\n       '));
     await page.screenshot({ path: path.join(OUT, '1-subs-light.png') });
 
-    // 非表示ボタン
+    // スキップ → 同じ位置に別の動画が補充される
     const before = subsCards.length;
-    await page.locator('#yt-shuffle-host .card').first().hover();
-    await page.locator('#yt-shuffle-host .card .acts button').first().click();
-    await page.waitForFunction((n) => document.querySelector('#yt-shuffle-host').shadowRoot.querySelectorAll('.card').length === n - 1, before);
-    step('「興味なし」で 1 本消えた');
+    const firstHref = subsCards[0].href;
+    await page.locator('#yt-shuffle-host .card .act[data-act="skip"]').first().click();
+    await page.waitForFunction(
+      (href) => document.querySelector('#yt-shuffle-host').shadowRoot.querySelector('.card a.title').href !== href,
+      firstHref
+    );
+    assert.equal(await page.locator('#yt-shuffle-host .card').count(), before, 'スキップしても補充されて本数は同じ');
+    const skippedId = new URL(firstHref).searchParams.get('v');
+    const skips1 = await sw.evaluate(async () => (await chrome.storage.local.get('hidden')).hidden.skips);
+    assert.ok(skips1[skippedId] > Date.now() + 29 * 86400000, '30 日間スキップ');
+    const hrefs1 = await page.locator('#yt-shuffle-host .card a.title').evaluateAll((els) => els.map((a) => a.href));
+    assert.ok(!hrefs1.includes(firstHref));
+    step(`「スキップ」で入れ替わった（${before} 本のまま）`);
+    await page.screenshot({ path: path.join(OUT, '6-skip-buttons.png') });
+
+    // 興味なし・チャンネル除外
+    await page.locator('#yt-shuffle-host .card .act[data-act="hide"]').first().click();
+    await page.waitForFunction(
+      (href) => document.querySelector('#yt-shuffle-host').shadowRoot.querySelector('.card a.title').href !== href,
+      hrefs1[0]
+    );
+    const chName = await page.locator('#yt-shuffle-host .card .meta a').nth(1).textContent();
+    await page.locator('#yt-shuffle-host .card .act[data-act="channel"]').nth(1).click();
+    await page.waitForFunction(
+      (name) => ![...document.querySelector('#yt-shuffle-host').shadowRoot.querySelectorAll('.card .meta a')].some((a) => a.textContent === name),
+      chName
+    );
+    step(`「興味なし」「チャンネル除外（${chName}）」も補充つきで動作`);
 
     // 近いチャンネル
     await page.locator('#yt-shuffle-host .tab[data-mode="similar"]').click();
@@ -424,6 +448,30 @@ async function makeVideo(context) {
     assert.ok(rec, '再生した動画が記録される');
     assert.match(rec.c || '', /^UC/, 'チャンネル ID も記録される（page-hook 経由）');
     step(`視聴を自動記録: ${watchedId} → ${JSON.stringify(rec)}`);
+
+    // 再生ページの「スキップして次のおすすめへ」
+    const skipBar = page.locator('#yt-shuffle-host .skipbar');
+    await skipBar.waitFor({ state: 'visible', timeout: 5000 });
+    await page.screenshot({ path: path.join(OUT, '7-watch-skipbar.png') });
+    await Promise.all([page.waitForURL((u) => u.searchParams.get('v') !== watchedId, { timeout: 20000 }), skipBar.click()]);
+    const nextId = new URL(page.url()).searchParams.get('v');
+    const skips2 = await sw.evaluate(async () => (await chrome.storage.local.get('hidden')).hidden.skips);
+    assert.ok(skips2[watchedId] > Date.now(), '再生していた動画がスキップ扱いになる');
+    step(`スキップして次へ: ${watchedId} → ${nextId}`);
+
+    // ショートカット（Alt+Shift+N）相当: Service Worker からスキップ指示
+    await skipBar.waitFor({ state: 'visible', timeout: 5000 });
+    await Promise.all([
+      page.waitForURL((u) => u.searchParams.get('v') !== nextId, { timeout: 20000 }),
+      sw.evaluate(async () => {
+        const [tab] = await chrome.tabs.query({ url: 'https://www.youtube.com/*' });
+        await chrome.tabs.sendMessage(tab.id, { type: 'yts:skip' });
+      }),
+    ]);
+    step(`ショートカット相当でも次へ: ${nextId} → ${new URL(page.url()).searchParams.get('v')}`);
+    await page.goto(`https://www.youtube.com/watch?v=${F.vid(3100)}`);
+    await page.waitForTimeout(1500);
+    assert.ok(await skipBar.isHidden(), 'おすすめ以外の動画ではスキップボタンを出さない');
 
     // 設定ページ + Takeout 取り込み
     const opt = await context.newPage();

@@ -49,6 +49,7 @@
     compass:
       'M12 10.9a1.1 1.1 0 1 0 0 2.2 1.1 1.1 0 0 0 0-2.2zM12 2a10 10 0 1 0 0 20 10 10 0 0 0 0-20zm2.19 12.19L6 18l3.81-8.19L18 6z',
     width: 'M8 7l-5 5 5 5v-4h8v4l5-5-5-5v4H8z',
+    skip: 'M6 18l8.5-6L6 6v12zM16 6v12h2V6h-2z',
     subs:
       'M10 18v-6l5 3-5 3zm7-15H7v1h10V3zm3 3H4v1h16V6zm2 3H2v12h20V9zM3 10h18v10H3V10z',
   };
@@ -111,6 +112,12 @@
   const els = {};
 
   els.fab = h('button', { class: 'fab', title: 'YT Shuffle を開く（Alt+Shift+Y）', onclick: () => toggle() }, dice(28, '#ff0033'));
+  els.skipBar = h(
+    'button',
+    { class: 'skipbar', hidden: true, title: 'この動画をスキップして、次のおすすめを再生（Alt+Shift+N）', onclick: () => skipAndNext() },
+    icon('skip', 20),
+    'スキップして次のおすすめへ'
+  );
 
   els.tabs = Object.entries(MODES).map(([mode, m]) =>
     h('button', { class: 'tab', role: 'tab', 'data-mode': mode, onclick: () => setMode(mode) }, icon(m.icon, 18), m.label)
@@ -195,7 +202,7 @@
     if (e.key !== 'Escape') e.stopPropagation();
   });
 
-  shadow.append(els.fab, els.panel);
+  shadow.append(els.fab, els.skipBar, els.panel);
   document.documentElement.append(host);
 
   // ---------- 表示状態 ----------
@@ -206,10 +213,14 @@
   syncTheme();
 
   let showFab = true;
+  let settingsCache = store.DEFAULT_SETTINGS;
+  let skipBarFor = null; // { id, mode }: 再生中の動画がどのタブのおすすめか
   function updateFab() {
     els.fab.hidden = !showFab || state.open || !!document.fullscreenElement;
+    els.skipBar.hidden = !skipBarFor || state.open || !!document.fullscreenElement;
   }
   function applySettings(s) {
+    settingsCache = s;
     showFab = s.showFab !== false;
     updateFab();
     setPanelWidth(s.panelWidth, false);
@@ -300,6 +311,10 @@
   });
 
   chrome.runtime.onMessage.addListener((msg, _sender, sendResponse) => {
+    if (msg && msg.type === 'yts:skip') {
+      skipAndNext();
+      sendResponse({ ok: true });
+    }
     if (msg && msg.type === 'yts:toggle') {
       if (msg.open) open();
       else toggle();
@@ -415,12 +430,68 @@
 
   async function runLucky() {
     let data = state.data[state.mode];
-    const fresh = (d) => d && d.results && d.results.some((r) => !state.seen.has(r.id)) && Date.now() - d.at < 6 * 3600e3;
+    const cur = currentWatchId();
+    const fresh = (d) => d && d.results && d.results.some((r) => r.id !== cur && !state.seen.has(r.id)) && Date.now() - d.at < 6 * 3600e3;
     if (!fresh(data)) data = await runShuffle();
     if (!data || !data.results.length) return;
-    const unseen = data.results.filter((r) => !state.seen.has(r.id));
+    const unseen = data.results.filter((r) => r.id !== cur && !state.seen.has(r.id));
     const pick = R.pickLucky(unseen.length ? unseen : data.results);
     if (pick) location.href = watchUrl(pick.id);
+  }
+
+  // ---------- スキップ ----------
+  function currentWatchId() {
+    return location.pathname === '/watch' ? new URLSearchParams(location.search).get('v') : null;
+  }
+  async function findResultMode(id) {
+    const order = [state.mode, ...Object.keys(MODES).filter((m) => m !== state.mode)];
+    for (const mode of order) {
+      if (!state.data[mode]) state.data[mode] = await store.getLast(mode);
+      const d = state.data[mode];
+      if (d && d.results && d.results.some((r) => r.id === id)) return mode;
+    }
+    return null;
+  }
+  // 再生中の動画が YT Shuffle のおすすめなら「スキップして次へ」ボタンを出す
+  async function updateSkipBar() {
+    const id = currentWatchId();
+    const mode = id ? await findResultMode(id) : null;
+    skipBarFor = mode ? { id, mode } : null;
+    updateFab();
+  }
+  let lastHref = location.href;
+  setInterval(() => {
+    if (location.href === lastHref) return;
+    lastHref = location.href;
+    updateSkipBar();
+  }, 1000);
+  document.addEventListener('yt-navigate-finish', () => updateSkipBar());
+  updateSkipBar();
+
+  // 今の動画をスキップ（しばらく出さない）して、次のおすすめを再生
+  async function skipAndNext() {
+    const id = currentWatchId();
+    const mode = (skipBarFor && skipBarFor.id === id && skipBarFor.mode) || state.mode;
+    els.skipBar.disabled = true;
+    try {
+      if (id) {
+        await store.skipVideo(id, settingsCache.skipDays);
+        if (state.data[mode]) await removeResults((x) => x.id === id, mode);
+      }
+      state.seen = new Set((await store.loadWatched()).keys());
+      let d = state.data[mode];
+      const pickable = (x) => (x && x.results ? x.results.filter((r) => r.id !== id && !state.seen.has(r.id)) : []);
+      if (!pickable(d).length) {
+        // 候補が尽きたらシャッフルし直す（パネルを開いて進み具合を見せる）
+        if (state.mode !== mode) await setMode(mode);
+        if (!state.open) await open();
+        d = await runShuffle();
+      }
+      const pick = R.pickLucky(pickable(d));
+      if (pick) location.href = watchUrl(pick.id);
+    } finally {
+      els.skipBar.disabled = false;
+    }
   }
 
   async function runSync(force = true) {
@@ -460,22 +531,46 @@
     }
   }
 
+  async function skipVideo(r) {
+    await store.skipVideo(r.id, settingsCache.skipDays);
+    await removeResults((x) => x.id === r.id);
+  }
   async function hideVideo(r) {
     await store.hideVideo(r.id);
-    removeResults((x) => x.id === r.id);
+    await removeResults((x) => x.id === r.id);
   }
   async function hideChannel(r) {
     if (!r.channelId) return hideVideo(r);
     await store.hideChannel(r.channelId, r.channelName);
-    removeResults((x) => x.channelId === r.channelId);
+    await removeResults((x) => x.channelId === r.channelId);
   }
-  function removeResults(pred) {
-    const d = state.data[state.mode];
+  // 一覧から消して、空いたところを補充候補で埋める
+  async function removeResults(pred, mode = state.mode) {
+    const d = state.data[mode];
     if (!d) return;
-    d.results = d.results.filter((x) => !pred(x));
+    const idx = d.results.findIndex(pred);
+    const kept = d.results.filter((x) => !pred(x));
     if (d.channels) d.channels = d.channels.filter((c) => !pred({ id: null, channelId: c.id }));
-    store.saveLast(state.mode, d);
-    renderResults();
+    const hidden = await store.getHidden();
+    const now = Date.now();
+    const isExcluded = (c) =>
+      pred(c) ||
+      state.seen.has(c.id) ||
+      !!hidden.videos[c.id] ||
+      hidden.skips[c.id] > now ||
+      !!(c.channelId && hidden.channels[c.channelId]);
+    const r = R.refill(kept, d.pool || [], {
+      maxPerChannel: settingsCache.maxPerChannel,
+      limit: d.results.length,
+      isExcluded,
+    });
+    const next = kept.slice();
+    if (idx >= 0) next.splice(Math.min(idx, next.length), 0, ...r.added);
+    else next.push(...r.added);
+    d.results = next;
+    d.pool = r.pool;
+    await store.saveLast(mode, d);
+    if (mode === state.mode) renderResults(true);
   }
 
   // ---------- 描画 ----------
@@ -485,7 +580,7 @@
     els.list.replaceChildren(h('div', { class: 'empty' }, dice(56), h('p', null, text)));
   }
 
-  function renderResults() {
+  function renderResults(keepScroll) {
     const d = state.data[state.mode];
     if (!d) {
       showEmpty(
@@ -534,8 +629,9 @@
       );
       return;
     }
+    const top = els.list.scrollTop;
     els.list.replaceChildren(h('div', { class: 'grid' }, d.results.map(card)));
-    els.list.scrollTop = 0;
+    els.list.scrollTop = keepScroll ? top : 0;
   }
   function showEmptyList(text) {
     els.list.replaceChildren(h('div', { class: 'empty' }, h('p', null, text)));
@@ -564,16 +660,27 @@
         h('a', { class: 'title', href: watchUrl(r.id), title: r.title }, r.title || '(タイトル不明)'),
         h('div', { class: 'meta' }, h('a', { href: channelUrl(r) }, r.channelName || 'チャンネル')),
         meta2 ? h('div', { class: 'meta' }, meta2) : null,
-        h('div', { class: 'chips' }, chips)
-      ),
-      h(
-        'div',
-        { class: 'acts' },
-        h('button', { title: '興味なし（この動画を今後出さない）', onclick: () => hideVideo(r) }, icon('close', 16)),
-        h('button', { title: 'このチャンネルを今後出さない', onclick: () => hideChannel(r) }, icon('block', 16))
+        h('div', { class: 'chips' }, chips),
+        h(
+          'div',
+          { class: 'acts' },
+          h(
+            'button',
+            { class: 'act', 'data-act': 'skip', title: `今回は見送る（${settingsCache.skipDays}日間は出さない）。代わりの動画を補充します`, onclick: () => skipVideo(r) },
+            icon('skip', 15),
+            'スキップ'
+          ),
+          h('button', { class: 'act', 'data-act': 'hide', title: 'この動画を今後ずっと出さない', onclick: () => hideVideo(r) }, icon('close', 15), '興味なし'),
+          h(
+            'button',
+            { class: 'act', 'data-act': 'channel', title: 'このチャンネルの動画を今後出さない', onclick: () => hideChannel(r) },
+            icon('block', 15),
+            'チャンネル除外'
+          )
+        )
       )
     );
   }
 
-  YTS.panel = { open, close, toggle };
+  YTS.panel = { open, close, toggle, skipAndNext };
 })(globalThis);

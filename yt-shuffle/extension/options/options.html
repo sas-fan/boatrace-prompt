@@ -23,7 +23,8 @@
           <li>画面右下の <b>サイコロボタン</b>、ツールバーの拡張機能アイコン、または <kbd>Alt</kbd>+<kbd>Shift</kbd>+<kbd>Y</kbd> でパネルを開きます。初回は登録チャンネルと視聴履歴を自動で読み込みます。</li>
           <li><b>「登録チャンネル」</b>タブ: 登録しているのに見ていないチャンネルから、人気の未視聴動画を選びます。<br />
             <b>「近いチャンネル」</b>タブ: よく見るチャンネルに近い、まだ登録していないチャンネルの人気動画を選びます。</li>
-          <li><b>シャッフル</b>で候補を一覧表示、<b>おまかせ1本</b>ですぐ再生。気に入らない動画は × で今後出なくなります。</li>
+          <li><b>シャッフル</b>で候補を一覧表示、<b>おまかせ1本</b>ですぐ再生。気分じゃない動画は<b>スキップ</b>（しばらく出さない・代わりを補充）、興味がない動画は<b>興味なし</b>で今後出なくなります。</li>
+          <li>おすすめから開いた動画では、右下の<b>「スキップして次のおすすめへ」</b>ボタン、または <kbd>Alt</kbd>+<kbd>Shift</kbd>+<kbd>N</kbd> で次の動画へ進めます。</li>
         </ol>
         <p class="actions">
           <button id="open-youtube" class="primary">YouTube を開いてパネルを表示</button>
@@ -78,6 +79,7 @@
             <label><span>最長の長さ（分・0で無制限）</span><input type="number" name="maxDurationMin" min="0" max="600" /></label>
             <label><span>最低再生回数（0で無制限）</span><input type="number" name="minViews" min="0" step="1000" /></label>
             <label><span>視聴済みとみなす再生割合（%）</span><input type="number" name="watchedThreshold" min="1" max="100" /></label>
+            <label><span>「スキップ」した動画を出さない日数</span><input type="number" name="skipDays" min="1" max="365" /></label>
           </fieldset>
 
           <fieldset>
@@ -136,6 +138,7 @@
         <div id="hidden-channels" class="hidden-list"></div>
         <p class="actions">
           <button type="button" id="clear-hidden-videos">非表示にした動画をすべて戻す</button>
+          <button type="button" id="clear-skips">スキップした動画をすべて戻す</button>
         </p>
       </section>
 

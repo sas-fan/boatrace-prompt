@@ -50,6 +50,16 @@ svg { flex: none; }
 }
 .fab:hover { opacity: 1; transform: scale(1.06) rotate(-10deg); }
 .fab[hidden] { display: none; }
+.skipbar {
+  position: fixed; right: 84px; bottom: 26px; z-index: 2147483000;
+  height: 40px; padding: 0 16px 0 12px; border-radius: 20px; border: none;
+  display: inline-flex; align-items: center; gap: 6px;
+  background: rgba(15, 15, 15, 0.9); color: #fff; font-size: 14px; font-weight: 500;
+  box-shadow: 0 4px 14px rgba(0, 0, 0, 0.3); transition: background 0.15s;
+}
+.skipbar:hover { background: var(--accent); }
+.skipbar:disabled { opacity: 0.6; cursor: default; }
+.skipbar[hidden] { display: none; }
 
 .panel {
   position: fixed; top: 0; right: 0; bottom: 0; z-index: 2147483001;
@@ -161,7 +171,7 @@ svg { flex: none; }
 .body { min-width: 0; }
 .title {
   display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; overflow: hidden;
-  margin-right: 26px; font-size: 14px; font-weight: 500; line-height: 1.35;
+  font-size: 14px; font-weight: 500; line-height: 1.35;
 }
 .meta { margin-top: 3px; font-size: 12px; color: var(--fg2); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .meta a:hover { color: var(--fg); }
@@ -170,16 +180,13 @@ svg { flex: none; }
 .card:hover .chip { background: var(--bg); }
 .chip.reason { background: var(--accent-soft); color: var(--accent-text); }
 .chip.similar { background: var(--blue-soft); color: var(--blue); }
-.acts {
-  position: absolute; top: 6px; right: 4px; display: flex; flex-direction: column; gap: 4px;
-  opacity: 0; transition: opacity 0.15s;
+.acts { display: flex; flex-wrap: wrap; gap: 2px; margin: 4px 0 0 -6px; }
+.act {
+  display: inline-flex; align-items: center; gap: 3px; height: 24px; padding: 0 7px;
+  border: none; border-radius: 12px; background: transparent; color: var(--fg2); font-size: 11.5px;
 }
-.card:hover .acts, .card:focus-within .acts { opacity: 1; }
-.acts button {
-  width: 26px; height: 26px; border-radius: 50%; border: none; background: var(--bg);
-  display: grid; place-items: center; color: var(--fg2); box-shadow: 0 1px 3px rgba(0, 0, 0, 0.25);
-}
-.acts button:hover { color: var(--accent); }
+.act:hover { background: var(--bg3); color: var(--fg); }
+.act[data-act="skip"] { color: var(--fg); font-weight: 500; }
 
 .empty { padding: 48px 28px; text-align: center; color: var(--fg2); }
 .empty svg { color: var(--accent); }
@@ -207,8 +214,7 @@ svg { flex: none; }
   .grid { grid-template-columns: repeat(auto-fill, minmax(240px, 1fr)); gap: 6px 4px; }
   .card { grid-template-columns: 1fr; gap: 8px; align-content: start; }
   .thumb { width: 100%; }
-  .title { margin-right: 0; font-size: 15px; }
-  .acts { top: 14px; right: 14px; flex-direction: row; }
+  .title { font-size: 15px; }
 }
 @container (max-width: 400px) {
   .card { grid-template-columns: 128px 1fr; }

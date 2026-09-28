@@ -58,6 +58,15 @@ chrome.action.onClicked.addListener(async (tab) => {
   openYouTubeWithPanel();
 });
 
+// Alt+Shift+N: 今の動画をスキップして次のおすすめへ
+chrome.commands.onCommand.addListener(async (command, tab) => {
+  if (command !== 'skip-next') return;
+  if (!tab || tab.id == null) [tab] = await chrome.tabs.query({ active: true, currentWindow: true });
+  if (tab && tab.id != null && tab.url && YT_RE.test(tab.url)) {
+    chrome.tabs.sendMessage(tab.id, { type: 'yts:skip' }).catch(() => {});
+  }
+});
+
 chrome.runtime.onInstalled.addListener((details) => {
   if (details.reason === 'install') chrome.runtime.openOptionsPage();
 });

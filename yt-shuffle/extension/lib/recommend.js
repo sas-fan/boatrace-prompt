@@ -110,6 +110,7 @@
   function exclusionReason(v, ctx) {
     const { settings, watched, hidden } = ctx;
     if (hidden.videos[v.id]) return 'hidden';
+    if (hidden.skips && hidden.skips[v.id] > (ctx.now || Date.now())) return 'skipped';
     if (v.channelId && hidden.channels[v.channelId]) return 'hiddenChannel';
     if (watched.has(v.id)) return 'watched';
     if (v.watched != null && v.watched >= settings.watchedThreshold) return 'watched';
@@ -194,6 +195,36 @@
     return out.sort((a, b) => b.score - a.score);
   }
 
+  // 表示しきれなかった候補（スキップしたときの補充用）
+  function reservePool(scored, results, n = 60) {
+    const ids = new Set(results.map((r) => r.id));
+    return scored.filter((c) => !ids.has(c.id)).slice(0, n);
+  }
+
+  // 一覧から消した分を補充候補から埋める（1 チャンネルあたりの上限は守る）
+  function refill(results, pool, { maxPerChannel = 2, limit = 20, isExcluded = () => false } = {}) {
+    const out = results.slice();
+    const ids = new Set(out.map((r) => r.id));
+    const counts = new Map();
+    const keyOf = (c) => channelKeyOf(c.channelId, c.channelName) || c.id;
+    for (const r of out) counts.set(keyOf(r), (counts.get(keyOf(r)) || 0) + 1);
+    const added = [];
+    const rest = [];
+    for (const c of pool || []) {
+      if (ids.has(c.id) || isExcluded(c)) continue;
+      const k = keyOf(c);
+      if (out.length >= limit || (counts.get(k) || 0) >= maxPerChannel) {
+        rest.push(c);
+        continue;
+      }
+      out.push(c);
+      added.push(c);
+      ids.add(c.id);
+      counts.set(k, (counts.get(k) || 0) + 1);
+    }
+    return { results: out, added, pool: rest };
+  }
+
   // 「おまかせ 1 本」: 上位からスコアの高いものほど選ばれやすく 1 本
   function pickLucky(results, rng = Math.random) {
     const top = results.slice(0, 8);
@@ -217,6 +248,8 @@
     popularity,
     scoreCandidates,
     diversify,
+    reservePool,
+    refill,
     pickLucky,
   };
   YTS.recommend = recommend;

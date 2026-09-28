@@ -221,6 +221,7 @@
       mode: 'subs',
       at: Date.now(),
       results,
+      pool: R.reservePool(scored, results),
       checked: picks.length,
       feed: feedCount,
       period: ctx.periodMs ? U.periodLabel(ctx.settings.periodValue, ctx.settings.periodUnit) : null,
@@ -351,6 +352,7 @@
     }
     const scored = R.scoreCandidates(R.assignChannelMax([...cands.values()]), { profile: ctx.profile, settings, rng });
     const results = R.diversify(scored, settings.maxPerChannel, settings.resultCount);
+    const pool = R.reservePool(scored, results);
     const channels = ranked
       .filter((a) => !a.subscribed && !(a.id && hiddenCh.has(a.id)))
       .slice(0, 12)
@@ -360,6 +362,7 @@
       mode: 'similar',
       at: Date.now(),
       results,
+      pool,
       channels,
       seeds: seeds.map((s) => s.channel.title),
       period: ctx.periodMs ? U.periodLabel(settings.periodValue, settings.periodUnit) : null,

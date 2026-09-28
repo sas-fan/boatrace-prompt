@@ -22,6 +22,7 @@
     maxDurationMin: 0, // 0 = 上限なし
     minViews: 0,
     watchedThreshold: 20, // この % 以上再生済みなら「視聴済み」とみなす
+    skipDays: 30, // 「スキップ」した動画を出さない日数
     neglectDays: 90, // これ以上見ていない登録チャンネルを「ご無沙汰」とみなす
     includeFrequent: true, // よく見るチャンネルも低確率で混ぜる
     historyPages: 10, // 同期時に読む視聴履歴のページ数
@@ -169,11 +170,27 @@
     return stale.length;
   }
 
-  // ---------- 非表示（興味なし） ----------
+  // ---------- 非表示（興味なし）・スキップ ----------
   async function getHidden() {
     const { hidden } = await get('hidden');
     const h = hidden || {};
-    return { videos: h.videos || {}, channels: h.channels || {} };
+    return { videos: h.videos || {}, channels: h.channels || {}, skips: h.skips || {} };
+  }
+  // スキップ: 指定日数だけ出さない（期限切れは書き込み時に掃除）
+  async function skipVideo(id, days) {
+    const h = await getHidden();
+    const now = Date.now();
+    for (const [k, until] of Object.entries(h.skips)) if (until <= now) delete h.skips[k];
+    h.skips[id] = now + Math.max(1, Number(days) || 30) * 86400000;
+    await set({ hidden: h });
+  }
+  async function clearSkips() {
+    const h = await getHidden();
+    h.skips = {};
+    await set({ hidden: h });
+  }
+  function activeSkipCount(h, now = Date.now()) {
+    return Object.values(h.skips || {}).filter((until) => until > now).length;
   }
   async function hideVideo(id) {
     const h = await getHidden();
@@ -237,6 +254,7 @@
       watched: watched.size,
       hiddenVideos: Object.keys(hidden.videos).length,
       hiddenChannels: Object.keys(hidden.channels).length,
+      skipped: activeSkipCount(hidden),
       historySyncedAt: meta.historySyncedAt || 0,
     };
   }
@@ -271,6 +289,9 @@
     hideChannel,
     unhideChannel,
     clearHiddenVideos,
+    skipVideo,
+    clearSkips,
+    activeSkipCount,
     getRecent,
     pushRecent,
     getLast,

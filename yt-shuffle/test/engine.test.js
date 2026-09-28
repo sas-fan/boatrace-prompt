@@ -212,3 +212,19 @@ test('期間指定（1 週間以内）: 人気順の古い動画は外れ、最�
   assert.equal(all.period, null);
   assert.ok(all.results.some((r) => /^(ラーメン|キャンプ)/.test(r.title)));
 });
+
+test('スキップした動画は次のシャッフルに出ず、補充候補（pool）も返る', async () => {
+  await chrome.storage.local.clear();
+  await engine.sync({ force: true });
+  await store.saveSettings({ channelsPerShuffle: 12, resultCount: 6, maxPerChannel: 1, periodValue: 0 });
+  const first = await engine.shuffleSubscribed({ rng: U.makeRng(21) });
+  assert.equal(first.results.length, 6);
+  assert.ok(first.pool.length > 0, '補充候補がある');
+  assert.ok(first.pool.every((p) => !first.results.some((r) => r.id === p.id)));
+  for (const r of first.results) await store.skipVideo(r.id, 30);
+  await chrome.storage.local.set({ recent: { channels: [], seeds: [] } });
+  const second = await engine.shuffleSubscribed({ rng: U.makeRng(21) });
+  const skipped = new Set(first.results.map((r) => r.id));
+  assert.ok(second.results.length > 0);
+  assert.ok(second.results.every((r) => !skipped.has(r.id)), 'スキップした動画は出ない');
+});

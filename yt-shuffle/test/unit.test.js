@@ -501,3 +501,46 @@ test('recommend: assignChannelMax はチャンネルごとの最大再生回数'
   ]);
   assert.deepEqual(list.map((c) => c.channelMaxViews), [500, 500, 7]);
 });
+
+// ---------------------------------------------------------------- スキップ
+test('store: スキップは期限付きで、期限切れは掃除される', async () => {
+  await chrome.storage.local.clear();
+  await store.skipVideo(F.vid(1), 30);
+  let h = await store.getHidden();
+  assert.ok(h.skips[F.vid(1)] > Date.now() + 29 * U.DAY);
+  assert.equal(store.activeSkipCount(h), 1);
+  // 期限切れのものは次の書き込みで消える
+  h.skips[F.vid(2)] = Date.now() - 1000;
+  await chrome.storage.local.set({ hidden: h });
+  assert.equal(store.activeSkipCount(await store.getHidden()), 1);
+  await store.skipVideo(F.vid(3), 7);
+  h = await store.getHidden();
+  assert.deepEqual(Object.keys(h.skips).sort(), [F.vid(1), F.vid(3)]);
+  assert.equal((await store.summary()).skipped, 2);
+  await store.clearSkips();
+  assert.deepEqual((await store.getHidden()).skips, {});
+});
+
+test('recommend: スキップ中の動画は除外、期限切れなら戻る', () => {
+  const now = Date.UTC(2026, 8, 28);
+  const ctx = {
+    settings: store.DEFAULT_SETTINGS,
+    watched: new Map(),
+    hidden: { videos: {}, channels: {}, skips: { [F.vid(1)]: now + U.DAY, [F.vid(2)]: now - 1 } },
+    now,
+  };
+  assert.equal(R.exclusionReason({ id: F.vid(1), duration: 600 }, ctx), 'skipped');
+  assert.equal(R.exclusionReason({ id: F.vid(2), duration: 600 }, ctx), null);
+});
+
+test('recommend: refill は上限を守って補充し、残りを返す', () => {
+  const mk = (id, ch) => ({ id, channelId: ch, score: 1 });
+  const results = [mk('a', 'X'), mk('b', 'X'), mk('c', 'Y')];
+  const pool = [mk('d', 'X'), mk('e', 'Z'), mk('f', 'Y'), mk('g', 'W'), mk('h', 'V')];
+  const r = R.refill(results, pool, { maxPerChannel: 2, limit: 5, isExcluded: (c) => c.id === 'f' });
+  assert.deepEqual(r.results.map((x) => x.id), ['a', 'b', 'c', 'e', 'g']);
+  assert.deepEqual(r.added.map((x) => x.id), ['e', 'g']);
+  assert.deepEqual(r.pool.map((x) => x.id), ['d', 'h'], '上限超えと枠外は残る・除外は捨てる');
+  const scored = [mk('a', 'X'), mk('z', 'Q'), mk('b', 'X')];
+  assert.deepEqual(R.reservePool(scored, [scored[0]]).map((x) => x.id), ['z', 'b']);
+});

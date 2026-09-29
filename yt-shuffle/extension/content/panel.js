@@ -50,6 +50,7 @@
       'M12 10.9a1.1 1.1 0 1 0 0 2.2 1.1 1.1 0 0 0 0-2.2zM12 2a10 10 0 1 0 0 20 10 10 0 0 0 0-20zm2.19 12.19L6 18l3.81-8.19L18 6z',
     width: 'M8 7l-5 5 5 5v-4h8v4l5-5-5-5v4H8z',
     skip: 'M6 18l8.5-6L6 6v12zM16 6v12h2V6h-2z',
+    up: 'M7.41 15.41 12 10.83l4.59 4.58L18 14l-6-6-6 6z',
     subs:
       'M10 18v-6l5 3-5 3zm7-15H7v1h10V3zm3 3H4v1h16V6zm2 3H2v12h20V9zM3 10h18v10H3V10z',
   };
@@ -161,6 +162,21 @@
   els.info = h('div', { class: 'info' });
   els.found = h('div', { class: 'found' });
   els.list = h('div', { class: 'list' });
+
+  // スクロールしてメニューが隠れたときにヘッダーに出す小さな操作ボタン
+  els.miniShuffle = h('button', { class: 'mini-btn mini-primary', title: 'シャッフル', onclick: () => runShuffle() }, dice(18, '#ff0033'), 'シャッフル');
+  els.miniLucky = h('button', { class: 'mini-btn', title: 'おまかせ1本', onclick: () => runLucky() }, icon('play', 16), 'おまかせ');
+  els.miniTabs = Object.entries(MODES).map(([mode, m]) =>
+    h('button', { class: 'seg', 'data-mode': mode, title: m.label, onclick: () => setMode(mode) }, m.label.replace('チャンネル', ''))
+  );
+  els.mini = h(
+    'div',
+    { class: 'mini' },
+    els.miniShuffle,
+    els.miniLucky,
+    h('div', { class: 'segs' }, els.miniTabs),
+    h('button', { class: 'mini-btn', title: 'メニューを表示（一番上へ）', onclick: () => scrollToTop() }, icon('up', 18), 'メニュー')
+  );
   els.diag = h('pre', { class: 'diag' });
 
   els.resizer = h('div', { class: 'resizer', title: 'ドラッグで幅を変更' });
@@ -171,23 +187,33 @@
     h(
       'header',
       { class: 'hd' },
-      h('div', { class: 'brand' }, dice(24), 'YT Shuffle'),
+      h('div', { class: 'brand' }, dice(24), h('span', { class: 'brand-name' }, 'YT Shuffle')),
+      els.mini,
       h('div', { class: 'spacer' }),
       h('button', { class: 'icon-btn', title: 'パネルの幅を切り替え（左端のドラッグでも変更できます）', onclick: cycleWidth }, icon('width')),
       h('button', { class: 'icon-btn', title: '設定・インポート', onclick: openOptions }, icon('gear')),
       h('button', { class: 'icon-btn', title: '閉じる（Esc）', onclick: () => close() }, icon('close'))
     ),
-    h('nav', { class: 'tabs', role: 'tablist' }, els.tabs),
-    els.desc,
-    h('div', { class: 'actions' }, els.shuffleBtn, els.luckyBtn, els.syncBtn),
-    els.filters,
-    els.status,
     els.progress,
-    els.error,
-    els.info,
-    els.found,
-    els.list,
-    els.diag,
+    // メニュー部分も動画と一緒にスクロールさせ、動画の表示領域を広く取る
+    (els.scroller = h(
+      'div',
+      { class: 'scroller' },
+      h(
+        'div',
+        { class: 'top' },
+        h('nav', { class: 'tabs', role: 'tablist' }, els.tabs),
+        els.desc,
+        (els.actions = h('div', { class: 'actions' }, els.shuffleBtn, els.luckyBtn, els.syncBtn)),
+        els.filters,
+        els.status,
+        els.error,
+        els.info,
+        els.found
+      ),
+      els.list,
+      els.diag
+    )),
     h(
       'footer',
       { class: 'ft' },
@@ -197,6 +223,16 @@
       h('span', null, 'Alt+Shift+Y で開閉')
     )
   );
+  // メニューのボタン行が見えなくなったらコンパクト表示（ヘッダーに小さなボタン・フッターを隠す）
+  function updateCompact() {
+    const threshold = els.actions.offsetTop + els.actions.offsetHeight;
+    els.panel.classList.toggle('compact', els.scroller.scrollTop > threshold);
+  }
+  els.scroller.addEventListener('scroll', updateCompact, { passive: true });
+  function scrollToTop() {
+    els.scroller.scrollTo({ top: 0, behavior: 'smooth' });
+  }
+
   // パネル内のキー入力が YouTube のショートカット（k, j, f など）に渡らないようにする
   els.panel.addEventListener('keydown', (e) => {
     if (e.key !== 'Escape') e.stopPropagation();
@@ -350,6 +386,7 @@
   async function setMode(mode) {
     state.mode = mode;
     els.tabs.forEach((t) => t.setAttribute('aria-selected', String(t.dataset.mode === mode)));
+    els.miniTabs.forEach((t) => t.setAttribute('aria-selected', String(t.dataset.mode === mode)));
     els.desc.textContent = MODES[mode].desc;
     if (!state.data[mode]) state.data[mode] = await store.getLast(mode);
     state.seen = new Set((await store.loadWatched()).keys());
@@ -368,7 +405,7 @@
 
   function setBusy(b) {
     state.busy = b;
-    [els.shuffleBtn, els.luckyBtn, els.syncBtn].forEach((x) => (x.disabled = b));
+    [els.shuffleBtn, els.luckyBtn, els.syncBtn, els.miniShuffle, els.miniLucky].forEach((x) => (x.disabled = b));
     els.progress.classList.toggle('on', b);
     if (b) setProgress({ text: '準備中…' });
   }
@@ -388,6 +425,7 @@
     const msg = (e && (ERRORS[e.code] || ERRORS[e.message])) || `エラーが発生しました: ${(e && e.message) || e}`;
     els.error.textContent = msg;
     els.error.classList.add('on');
+    scrollToTop();
   }
   function clearError() {
     els.error.classList.remove('on');
@@ -629,9 +667,10 @@
       );
       return;
     }
-    const top = els.list.scrollTop;
+    const top = els.scroller.scrollTop;
     els.list.replaceChildren(h('div', { class: 'grid' }, d.results.map(card)));
-    els.list.scrollTop = keepScroll ? top : 0;
+    els.scroller.scrollTop = keepScroll ? top : 0;
+    updateCompact();
   }
   function showEmptyList(text) {
     els.list.replaceChildren(h('div', { class: 'empty' }, h('p', null, text)));

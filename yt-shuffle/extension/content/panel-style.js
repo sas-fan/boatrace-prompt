@@ -67,6 +67,7 @@ svg { flex: none; }
   background: var(--bg); color: var(--fg);
   border-left: 1px solid var(--line); box-shadow: var(--shadow);
   display: flex; flex-direction: column;
+  container: panel / inline-size;
   transform: translateX(105%); visibility: hidden;
   transition: transform 0.22s ease, visibility 0s linear 0.22s;
 }
@@ -82,9 +83,34 @@ svg { flex: none; }
 }
 .resizer:hover::after, .panel.resizing .resizer::after { opacity: 1; }
 
-.hd { display: flex; align-items: center; gap: 4px; padding: 12px 10px 8px 16px; }
+.hd { display: flex; align-items: center; gap: 4px; padding: 10px 10px 8px 16px; border-bottom: 1px solid transparent; transition: border-color 0.15s; }
+.panel.compact .hd { padding: 6px 8px 6px 12px; border-bottom-color: var(--line); }
 .brand { display: flex; align-items: center; gap: 8px; font-size: 18px; font-weight: 700; }
 .brand svg { color: var(--accent); }
+.panel.compact .brand-name { display: none; }
+
+/* コンパクト表示（スクロール中）のヘッダー内ボタン */
+.mini { display: none; align-items: center; gap: 6px; margin-left: 8px; min-width: 0; overflow: hidden; }
+.panel.compact .mini { display: flex; }
+.mini-btn {
+  display: inline-flex; align-items: center; gap: 4px; height: 30px; padding: 0 10px;
+  border: none; border-radius: 15px; background: var(--bg2); font-size: 12.5px; font-weight: 500; white-space: nowrap;
+}
+.mini-btn:hover { background: var(--bg3); }
+.mini-btn.mini-primary { background: var(--accent); color: #fff; }
+.mini-btn.mini-primary:hover { filter: brightness(1.08); }
+.mini-btn:disabled { opacity: 0.5; cursor: default; filter: none; }
+.segs { display: inline-flex; padding: 2px; border-radius: 15px; background: var(--bg2); }
+.seg { height: 26px; padding: 0 10px; border: none; border-radius: 13px; background: transparent; font-size: 12px; white-space: nowrap; }
+.seg[aria-selected="true"] { background: var(--fg); color: var(--bg); }
+@container panel (max-width: 560px) {
+  .mini-btn { padding: 0 8px; }
+  .mini-btn:not(.mini-primary) { font-size: 0; gap: 0; }
+  .mini-btn.mini-primary { font-size: 0; gap: 0; }
+}
+
+.scroller { position: relative; flex: 1; min-height: 0; overflow-y: auto; scrollbar-width: thin; }
+.top { padding-bottom: 2px; }
 .spacer { flex: 1; }
 .icon-btn {
   width: 36px; height: 36px; border-radius: 50%; border: none; background: transparent;
@@ -92,7 +118,7 @@ svg { flex: none; }
 }
 .icon-btn:hover { background: var(--bg2); }
 
-.tabs { display: flex; gap: 8px; padding: 0 16px; }
+.tabs { display: flex; gap: 8px; padding: 4px 16px 0; }
 .tab {
   flex: 1; height: 36px; padding: 0 12px; border-radius: 8px; border: none;
   background: var(--bg2); font-weight: 500;
@@ -127,7 +153,7 @@ svg { flex: none; }
 .custom[hidden] { display: none; }
 .suffix { font-size: 13px; color: var(--fg2); }
 .status { padding: 6px 16px 0; font-size: 12px; color: var(--fg2); }
-.progress { padding: 8px 16px 0; display: none; }
+.progress { padding: 0 16px 8px; display: none; }
 .progress.on { display: block; }
 .bar { height: 4px; border-radius: 2px; background: var(--bg2); overflow: hidden; }
 .bar i { display: block; height: 100%; width: 0; background: var(--accent); transition: width 0.2s; }
@@ -151,7 +177,7 @@ svg { flex: none; }
 .chan { flex: none; padding: 5px 10px; border-radius: 16px; background: var(--blue-soft); color: var(--blue); font-size: 12px; white-space: nowrap; }
 .chan:hover { filter: brightness(1.1); text-decoration: underline; }
 
-.list { flex: 1; overflow-y: auto; padding: 4px 8px 12px; scrollbar-width: thin; container-type: inline-size; }
+.list { padding: 4px 8px 12px; container-type: inline-size; }
 .grid { display: grid; grid-template-columns: 1fr; gap: 2px; }
 .card {
   position: relative; display: grid; grid-template-columns: 168px 1fr; gap: 10px;
@@ -203,6 +229,7 @@ svg { flex: none; }
   display: flex; align-items: center; gap: 12px; padding: 8px 16px;
   border-top: 1px solid var(--line); font-size: 12px; color: var(--fg2);
 }
+.panel.compact .ft { display: none; }
 .link {
   padding: 0; border: none; background: none; color: var(--fg2); font-size: 12px;
   text-decoration: underline; text-underline-offset: 2px;

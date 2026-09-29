@@ -203,7 +203,7 @@ async function makeVideo(context) {
   const context = await chromium.launchPersistentContext(userDataDir, {
     channel: 'chromium',
     headless: true,
-    viewport: { width: 1280, height: 820 },
+    viewport: { width: 1280, height: 720 },
     locale: 'ja-JP',
     args: [`--disable-extensions-except=${EXT}`, `--load-extension=${EXT}`, '--autoplay-policy=no-user-gesture-required'],
   });
@@ -276,7 +276,9 @@ async function makeVideo(context) {
     for (const c of subsCards) {
       const id = new URL(c.href).searchParams.get('v');
       const k = parseInt(id.slice(-2), 10);
-      assert.notEqual(k, 0, '再生済みバー付きの動画は出ない: ' + c.title);
+      // SUBS[7] は再生リストが無く RSS にフォールバックする（RSS には再生済みの情報がない）ので対象外
+      const chN = Math.floor(parseInt(id.slice(3), 10) / 100);
+      if (chN !== 8) assert.notEqual(k, 0, '再生済みバー付きの動画は出ない: ' + c.title);
       assert.notEqual(k, 11, 'ショートは出ない');
       assert.ok(c.chips.length >= 1, '理由のチップがある');
       assert.match(c.meta, /回視聴/);
@@ -314,6 +316,47 @@ async function makeVideo(context) {
       chName
     );
     step(`「興味なし」「チャンネル除外（${chName}）」も補充つきで動作`);
+
+    // スクロールするとメニューがたたまれ、動画部分が広くなる
+    const layout = () =>
+      page.locator('#yt-shuffle-host').evaluate((host) => {
+        const r = host.shadowRoot;
+        const panel = r.querySelector('.panel');
+        const scroller = r.querySelector('.scroller');
+        const list = r.querySelector('.list').getBoundingClientRect();
+        const sc = scroller.getBoundingClientRect();
+        const visibleList = Math.max(0, Math.min(list.bottom, sc.bottom) - Math.max(list.top, sc.top));
+        return {
+          compact: panel.classList.contains('compact'),
+          ratio: visibleList / panel.getBoundingClientRect().height,
+          miniVisible: getComputedStyle(r.querySelector('.mini')).display !== 'none',
+          footerVisible: getComputedStyle(r.querySelector('.ft')).display !== 'none',
+        };
+      });
+    const l0 = await layout();
+    assert.equal(l0.compact, false);
+    assert.equal(l0.miniVisible, false);
+    await page.locator('#yt-shuffle-host .scroller').evaluate((e) => e.scrollBy(0, 700));
+    await page.waitForTimeout(200);
+    const l1 = await layout();
+    step(`スクロール前: 動画部分 ${Math.round(l0.ratio * 100)}% → スクロール後: ${Math.round(l1.ratio * 100)}%（コンパクト表示）`);
+    assert.equal(l1.compact, true);
+    assert.ok(l1.miniVisible && !l1.footerVisible);
+    assert.ok(l1.ratio > 0.85, '動画部分がパネルの大半を占める: ' + l1.ratio);
+    await page.screenshot({ path: path.join(OUT, '8-compact-scrolled.png') });
+    // コンパクト表示のシャッフル
+    const hrefBefore = await page.locator('#yt-shuffle-host .card a.title').first().getAttribute('href');
+    await page.locator('#yt-shuffle-host .mini .mini-primary').click();
+    await page.waitForFunction(() => !document.querySelector('#yt-shuffle-host').shadowRoot.querySelector('.mini-primary').disabled, null, { timeout: 30000 });
+    const l2 = await layout();
+    assert.equal(l2.compact, false, 'シャッフル後は一番上に戻る');
+    assert.notEqual(await page.locator('#yt-shuffle-host .card a.title').first().getAttribute('href'), hrefBefore);
+    // 「メニュー」ボタンで一番上へ
+    await page.locator('#yt-shuffle-host .scroller').evaluate((e) => e.scrollBy(0, 700));
+    await page.waitForFunction(() => document.querySelector('#yt-shuffle-host').shadowRoot.querySelector('.panel').classList.contains('compact'));
+    await page.locator('#yt-shuffle-host .mini .mini-btn[title^="メニュー"]').click();
+    await page.waitForFunction(() => !document.querySelector('#yt-shuffle-host').shadowRoot.querySelector('.panel').classList.contains('compact'));
+    step('コンパクト表示のシャッフル・「メニュー」ボタンで一番上に戻る');
 
     // 近いチャンネル
     await page.locator('#yt-shuffle-host .tab[data-mode="similar"]').click();

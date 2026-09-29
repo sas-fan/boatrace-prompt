@@ -20,7 +20,7 @@
     excludeShorts: true,
     minDurationSec: 60,
     maxDurationMin: 0, // 0 = 上限なし
-    minViews: 0,
+    minViews: 1000, // これ未満の再生回数の動画は出さない（0 で制限なし）
     watchedThreshold: 20, // この % 以上再生済みなら「視聴済み」とみなす
     skipDays: 30, // 「スキップ」した動画を出さない日数
     neglectDays: 90, // これ以上見ていない登録チャンネルを「ご無沙汰」とみなす
@@ -29,6 +29,9 @@
     similarSeeds: 5, // 近いチャンネル探索で起点にする登録チャンネル数
     similarChannels: 6, // 近いチャンネルとして人気動画まで掘るチャンネル数
     cacheDays: 3, // チャンネル人気動画リストのキャッシュ日数
+    trendGenre: 'interest', // ジャンル別人気: 選択中のジャンル
+    trendPeriod: 'week', // ジャンル別人気: today / week / month / year
+    customGenres: [], // ジャンル別人気: 自分で追加したキーワード
     periodValue: 0, // 投稿日の期間（0 = すべての期間）
     periodUnit: 'month', // hour / day / week / month / year
     panelWidth: 720, // パネルの幅（px）
@@ -41,9 +44,14 @@
   const set = (obj) => local().set(obj);
 
   // ---------- 設定 ----------
+  const SETTINGS_SCHEMA = 2;
   async function getSettings() {
     const { settings } = await get('settings');
-    return Object.assign({}, DEFAULT_SETTINGS, settings || {});
+    const s = Object.assign({}, DEFAULT_SETTINGS, settings || {});
+    // v0.3 以前は最低再生回数の既定が 0 だったので、1000 回に引き上げる
+    if (settings && (settings.schema || 1) < 2 && !settings.minViews) s.minViews = DEFAULT_SETTINGS.minViews;
+    s.schema = SETTINGS_SCHEMA;
+    return s;
   }
   async function saveSettings(patch) {
     const next = Object.assign(await getSettings(), patch);
@@ -161,7 +169,7 @@
     return Object.keys(await get(null));
   }
   async function prunePopCache(maxAgeMs) {
-    const keys = (await allKeys()).filter((k) => /^(pop|lat|feed)_/.test(k));
+    const keys = (await allKeys()).filter((k) => /^(pop|lat|feed|srch)_/.test(k));
     if (!keys.length) return 0;
     const data = await get(keys);
     const now = Date.now();
@@ -224,6 +232,18 @@
     r.channels = merge(r.channels, channels, MAX_RECENT_CHANNELS);
     r.seeds = merge(r.seeds, seeds, MAX_RECENT_SEEDS);
     await set({ recent: r });
+  }
+
+  // ---------- 直近に表示した動画（次のシャッフルでは別の動画を出すため） ----------
+  const SHOWN_SETS = 3;
+  async function getShown(mode) {
+    const key = 'shown_' + mode;
+    const data = await get(key);
+    return data[key] || [];
+  }
+  async function pushShown(mode, ids) {
+    const sets = [ids, ...(await getShown(mode))].slice(0, SHOWN_SETS);
+    await set({ ['shown_' + mode]: sets });
   }
 
   // ---------- 最後の結果・メタ情報 ----------
@@ -294,6 +314,8 @@
     activeSkipCount,
     getRecent,
     pushRecent,
+    getShown,
+    pushShown,
     getLast,
     saveLast,
     getMeta,

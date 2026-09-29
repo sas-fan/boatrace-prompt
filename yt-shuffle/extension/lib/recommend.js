@@ -195,6 +195,63 @@
     return out.sort((a, b) => b.score - a.score);
   }
 
+  // 直近に表示した動画を外す。候補が足りなければ「今表示している分」だけ外す
+  // shownSets: 新しい順の表示履歴 [[id...], [id...], ...]
+  function excludeShown(cands, shownSets, want) {
+    const sets = shownSets || [];
+    const all = new Set(sets.flat());
+    let out = cands.filter((c) => !all.has(c.id));
+    if (out.length < want && sets.length > 1) {
+      const last = new Set(sets[0] || []);
+      out = cands.filter((c) => !last.has(c.id));
+    }
+    return out;
+  }
+
+  // ---------- ジャンル別人気 ----------
+  // [key, 表示名, 検索キーワード]
+  const TREND_GENRES = [
+    ['interest', 'あなた向け', null],
+    ['game', 'ゲーム', 'ゲーム実況'],
+    ['music', '音楽', 'MV'],
+    ['comedy', 'お笑い', 'お笑い'],
+    ['vtuber', 'VTuber', 'VTuber'],
+    ['anime', 'アニメ', 'アニメ'],
+    ['cooking', '料理', '料理'],
+    ['travel', '旅行', '旅行'],
+    ['sports', 'スポーツ', 'スポーツ'],
+    ['news', 'ニュース', 'ニュース'],
+    ['tech', 'ガジェット', 'ガジェット'],
+    ['car', '車・バイク', '車'],
+    ['animal', '動物', '動物'],
+    ['beauty', '美容', 'メイク'],
+    ['learn', '学び・解説', '解説'],
+    ['movie', '映画', '映画'],
+  ];
+  const TREND_PERIODS = [
+    ['today', '今日', DAY],
+    ['week', '今週', 7 * DAY],
+    ['month', '今月', 31 * DAY],
+    ['year', '今年', 366 * DAY],
+  ];
+  const FALLBACK_INTEREST = ['ゲーム実況', 'MV', 'お笑い'];
+
+  // → { key, label, queries: [検索キーワード...] }
+  function resolveGenre(key, profile, customGenres) {
+    if (typeof key === 'string' && key.startsWith('c:')) {
+      const word = key.slice(2);
+      return { key, label: word, queries: [word] };
+    }
+    const g = TREND_GENRES.find((x) => x[0] === key) || TREND_GENRES[0];
+    if (g[0] !== 'interest') return { key: g[0], label: g[1], queries: [g[2]] };
+    const terms = profile ? topTerms(profile, 3) : [];
+    const queries = terms.length ? terms : FALLBACK_INTEREST;
+    return { key: 'interest', label: terms.length ? `あなた向け（${terms.join('・')}）` : 'あなた向け', queries };
+  }
+  function trendPeriod(key) {
+    return TREND_PERIODS.find((p) => p[0] === key) || TREND_PERIODS[1];
+  }
+
   // 表示しきれなかった候補（スキップしたときの補充用）
   function reservePool(scored, results, n = 60) {
     const ids = new Set(results.map((r) => r.id));
@@ -250,6 +307,11 @@
     diversify,
     reservePool,
     refill,
+    excludeShown,
+    TREND_GENRES,
+    TREND_PERIODS,
+    resolveGenre,
+    trendPeriod,
     pickLucky,
   };
   YTS.recommend = recommend;

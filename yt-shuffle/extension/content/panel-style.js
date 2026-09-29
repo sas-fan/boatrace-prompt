@@ -150,6 +150,25 @@ svg { flex: none; }
 .sel:hover, .num:hover { background: var(--bg3); }
 .num { width: 64px; }
 .custom { display: inline-flex; align-items: center; gap: 6px; }
+.fgroup { display: inline-flex; align-items: center; gap: 6px; margin-right: 10px; }
+.fgroup[hidden] { display: none; }
+.genre-row { display: flex; flex-wrap: wrap; align-items: center; gap: 6px; padding: 10px 16px 0; }
+.genre-row[hidden] { display: none; }
+.genres { display: flex; flex-wrap: wrap; gap: 6px; }
+.genre {
+  display: inline-flex; align-items: center; border-radius: 16px; background: var(--bg2);
+  font-size: 12.5px; overflow: hidden;
+}
+.genre:hover { background: var(--bg3); }
+.genre.on { background: var(--fg); color: var(--bg); }
+.genre-btn { height: 28px; padding: 0 11px; border: none; background: transparent; color: inherit; font-size: inherit; }
+.genre-del { height: 28px; padding: 0 8px 0 0; margin-left: -6px; border: none; background: transparent; color: inherit; opacity: 0.6; display: grid; place-items: center; }
+.genre-del:hover { opacity: 1; }
+.genre-add { display: inline-flex; align-items: center; gap: 4px; }
+.genre-input { width: 130px; height: 28px; }
+.info-row { display: flex; align-items: center; justify-content: space-between; gap: 8px; }
+.act.replace { flex: none; margin: 0; color: var(--fg); font-weight: 500; background: var(--bg2); }
+.act.replace:hover { background: var(--bg3); }
 .custom[hidden] { display: none; }
 .suffix { font-size: 13px; color: var(--fg2); }
 .status { padding: 6px 16px 0; font-size: 12px; color: var(--fg2); }
@@ -206,6 +225,8 @@ svg { flex: none; }
 .card:hover .chip { background: var(--bg); }
 .chip.reason { background: var(--accent-soft); color: var(--accent-text); }
 .chip.similar { background: var(--blue-soft); color: var(--blue); }
+.chip.trend { background: rgba(255, 140, 0, 0.14); color: #c25e00; }
+:host([dark]) .chip.trend { color: #ffab5c; }
 .acts { display: flex; flex-wrap: wrap; gap: 2px; margin: 4px 0 0 -6px; }
 .act {
   display: inline-flex; align-items: center; gap: 3px; height: 24px; padding: 0 7px;

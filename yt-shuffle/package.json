@@ -1,6 +1,6 @@
 {
   "name": "yt-shuffle",
-  "version": "0.3.1",
+  "version": "0.4.0",
   "private": true,
   "description": "YouTube の登録チャンネルから未視聴の人気動画や、好みに近いチャンネルをランダムに提案する Chrome / Brave 拡張機能",
   "scripts": {

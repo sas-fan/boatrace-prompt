@@ -71,6 +71,33 @@ function recentVideos(chId) {
     published: age,
   }));
 }
+// 検索結果（ジャンル別人気）: 1 ページ 10 本 × 3 ページ
+const SEARCH_CH = Array.from({ length: 20 }, (_, i) => ({ id: F.cid(3000 + i), title: `人気クリエイター${i + 1}`, handle: `@pop${i + 1}` }));
+function searchPage(query, page) {
+  const qn = [...query].reduce((a, c) => a + c.charCodeAt(0), 0) % 997;
+  return Array.from({ length: 10 }, (_, k) => {
+    const i = page * 10 + k;
+    const ch = SEARCH_CH[(qn + i) % SEARCH_CH.length];
+    return {
+      id: F.vid(4000000 + qn * 100 + i),
+      title: `【${query}】今週いちばん見られた動画 No.${i + 1}`,
+      channelId: ch.id,
+      channelName: ch.title,
+      handle: ch.handle,
+      views: i % 10 === 9 ? 500 : Math.round(3_000_000 / (1 + i * 0.35)), // 各ページ 10 本目は再生回数が少ない
+      duration: 360 + i * 30,
+      published: `${1 + (i % 6)} 日前`,
+    };
+  });
+}
+function searchData(query, page) {
+  const items = searchPage(query, page).map(F.videoRenderer);
+  const cont = page < 2 ? [{ continuationItemRenderer: { continuationEndpoint: { continuationCommand: { token: `SEARCH|${query}|${page + 1}` } } } }] : [];
+  return page === 0
+    ? { contents: { twoColumnSearchResultsRenderer: { primaryContents: { sectionListRenderer: { contents: [{ itemSectionRenderer: { contents: items } }, ...cont] } } } } }
+    : { onResponseReceivedCommands: [{ appendContinuationItemsAction: { continuationItems: [{ itemSectionRenderer: { contents: items } }, ...cont] } }] };
+}
+const searchQueries = [];
 // よく見る登録チャンネル = 1〜5（履歴に出てくる）
 const HISTORY_SECTIONS = [
   { header: '今日', videos: [1, 2].flatMap((c) => channelVideos(F.cid(c)).slice(1, 4)) },
@@ -104,9 +131,18 @@ function routeYouTube(route) {
   const url = new URL(req.url());
   const p = url.pathname;
   const htmlRes = (body) => route.fulfill({ status: 200, contentType: 'text/html; charset=utf-8', body });
-  if (p === '/' || p === '/results') return htmlRes(F.html({ data: {}, body: pageBody('テスト用ダミーページ') }));
+  if (p === '/') return htmlRes(F.html({ data: {}, body: pageBody('テスト用ダミーページ') }));
   if (p === '/feed/channels') return htmlRes(F.html({ data: F.feedChannelsData(SUBS.slice(0, 20), 'SUBS_2') }));
   if (p === '/feed/history') return htmlRes(F.html({ data: F.historyData(HISTORY_SECTIONS, 'HIST_2') }));
+  if (p === '/results') {
+    const q = url.searchParams.get('search_query');
+    searchQueries.push([q, url.searchParams.get('sp')]);
+    return htmlRes(F.html({ data: searchData(q, 0) }));
+  }
+  if (p === '/youtubei/v1/search') {
+    const [, q, pg] = (JSON.parse(req.postData() || '{}').continuation || '').split('|');
+    return route.fulfill({ status: 200, contentType: 'application/json', body: JSON.stringify(q ? searchData(q, parseInt(pg, 10)) : {}) });
+  }
   if (p === '/youtubei/v1/browse') {
     seenAuth.push(req.headers()['authorization'] || '');
     const body = JSON.parse(req.postData() || '{}');
@@ -357,6 +393,20 @@ async function makeVideo(context) {
     await page.locator('#yt-shuffle-host .mini .mini-btn[title^="メニュー"]').click();
     await page.waitForFunction(() => !document.querySelector('#yt-shuffle-host').shadowRoot.querySelector('.panel').classList.contains('compact'));
     step('コンパクト表示のシャッフル・「メニュー」ボタンで一番上に戻る');
+    {
+      const before = await page.locator('#yt-shuffle-host .card a.title').evaluateAll((els) => els.map((a) => a.href));
+      await page.locator('#yt-shuffle-host .act.replace').click();
+      await page.waitForFunction(
+        (href) => document.querySelector('#yt-shuffle-host').shadowRoot.querySelector('.card a.title').href !== href,
+        before[0],
+        { timeout: 30000 }
+      );
+      await page.waitForFunction(() => !document.querySelector('#yt-shuffle-host').shadowRoot.querySelector('.btn.primary').disabled, null, { timeout: 30000 });
+      const after = await page.locator('#yt-shuffle-host .card a.title').evaluateAll((els) => els.map((a) => a.href));
+      const overlap = after.filter((h) => before.includes(h)).length;
+      assert.equal(overlap, 0, '登録チャンネルでも全部入れ替え');
+      step(`登録チャンネルの全部入れ替え: ${before.length} 本 → ${after.length} 本（重なり ${overlap}）`);
+    }
 
     // 近いチャンネル
     await page.locator('#yt-shuffle-host .tab[data-mode="similar"]').click();
@@ -381,6 +431,87 @@ async function makeVideo(context) {
     assert.equal(new Set(similar.chans.map((c) => c.name)).size, similar.chans.length, 'チャンネルが重複しない');
     assert.ok(similar.chans.slice(0, 6).every((c) => /\/channel\/UC/.test(c.href)), '上位チャンネルはリンクなしでも ID を解決');
     await page.screenshot({ path: path.join(OUT, '2-similar-light.png') });
+
+    // ---- ジャンル別人気 ----
+    const shadowText = (sel) => page.locator('#yt-shuffle-host').evaluate((h, s) => h.shadowRoot.querySelector(s).textContent, sel);
+    const waitIdle = () =>
+      page.waitForFunction(() => !document.querySelector('#yt-shuffle-host').shadowRoot.querySelector('.btn.primary').disabled, null, { timeout: 30000 });
+    const cardInfo = () =>
+      page.locator('#yt-shuffle-host .card').evaluateAll((els) =>
+        els.map((e) => ({
+          href: e.querySelector('a.title').href,
+          title: e.querySelector('a.title').textContent,
+          channel: e.querySelector('.meta a').textContent,
+          views: e.querySelectorAll('.meta')[1].textContent,
+          chips: [...e.querySelectorAll('.chip')].map((c) => c.textContent),
+        }))
+      );
+    await page.locator('#yt-shuffle-host .tab[data-mode="trend"]').click();
+    assert.ok(await page.locator('#yt-shuffle-host .genre-row').isVisible(), 'ジャンルの行が出る');
+    assert.ok(!(await page.locator('#yt-shuffle-host .fgroup').first().isVisible()), '投稿日の選択は隠れる');
+    assert.match(await shadowText('.list'), /ジャンルを選ぶ/);
+    await page.locator('#yt-shuffle-host .genre[data-genre="game"] .genre-btn').click();
+    await page.waitForFunction(() => /ゲーム/.test(document.querySelector('#yt-shuffle-host').shadowRoot.querySelector('.info').textContent), null, { timeout: 30000 });
+    await waitIdle();
+    const t1 = await cardInfo();
+    step(`ジャンル別人気「ゲーム」: ${t1.length} 本`);
+    console.log('   例:', t1.slice(0, 3).map((c) => `${c.title} ${c.channel} ${c.views} [${c.chips.join(', ')}]`).join('\n       '));
+    assert.ok(t1.length >= 10);
+    assert.deepEqual(searchQueries[searchQueries.length - 1], ['ゲーム実況', 'CAMSBAgDEAE='], '今週・視聴回数順で検索');
+    for (const c of t1) {
+      assert.match(c.chips[0], /ゲーム・今週の人気/);
+      assert.ok(!/No\.(10|20|30)$/.test(c.title), '1000 回未満の動画は出ない: ' + c.title);
+    }
+    assert.ok(await page.locator('#yt-shuffle-host .genre[data-genre="game"]').evaluate((e) => e.classList.contains('on')));
+    assert.ok(!/null|undefined/.test(await shadowText('.info')), '情報欄に null などが出ない');
+    await page.screenshot({ path: path.join(OUT, '9-trend-game.png') });
+
+    // 全部入れ替え
+    await page.locator('#yt-shuffle-host .act.replace').click();
+    await page.waitForFunction(
+      (href) => document.querySelector('#yt-shuffle-host').shadowRoot.querySelector('.card a.title').href !== href,
+      t1[0].href,
+      { timeout: 30000 }
+    );
+    await waitIdle();
+    const t2 = await cardInfo();
+    const t1ids = new Set(t1.map((c) => c.href));
+    assert.ok(t2.length > 0 && t2.every((c) => !t1ids.has(c.href)), '全部入れ替えで全て別の動画');
+    step(`全部入れ替え: ${t1.length} 本 → 別の ${t2.length} 本（重なり 0）`);
+
+    // 再生回数の条件（100万回以上）
+    await page.locator('#yt-shuffle-host .fgroup select.sel').last().selectOption('1000000');
+    await page.waitForFunction(() => document.querySelector('#yt-shuffle-host').shadowRoot.querySelector('.btn.primary').disabled, null, { timeout: 5000 }).catch(() => {});
+    await waitIdle();
+    const t3 = await cardInfo();
+    for (const c of t3) assert.ok(/(\d+(\.\d+)?)万/.test(c.views) && parseFloat(c.views) >= 100, '100万回以上: ' + c.views);
+    step(`再生回数「100万回以上」: ${t3.length} 本（${t3.map((c) => c.views.split(' ')[0]).slice(0, 4).join(', ')}…）`);
+    await page.locator('#yt-shuffle-host .fgroup select.sel').last().selectOption('1000');
+    await page.waitForFunction(() => document.querySelector('#yt-shuffle-host').shadowRoot.querySelector('.btn.primary').disabled, null, { timeout: 5000 }).catch(() => {});
+    await waitIdle();
+
+    // 自分でキーワード（ジャンル）を追加
+    await page.locator('#yt-shuffle-host .genre-input').fill('釣り');
+    await page.locator('#yt-shuffle-host .genre-input').press('Enter');
+    await page.waitForFunction(() => /釣り/.test(document.querySelector('#yt-shuffle-host').shadowRoot.querySelector('.info').textContent), null, { timeout: 30000 });
+    await waitIdle();
+    const t4 = await cardInfo();
+    assert.ok(t4.length > 0 && t4.every((c) => c.title.startsWith('【釣り】')));
+    assert.ok(await page.locator('#yt-shuffle-host .genre[data-genre="c:釣り"]').isVisible(), '追加したキーワードがチップになる');
+    step(`キーワード「釣り」を追加: ${t4.length} 本`);
+    await page.screenshot({ path: path.join(OUT, '10-trend-custom.png') });
+    // 期間（今月）
+    await page.locator('#yt-shuffle-host .fgroup:not([hidden]) select.sel').first().selectOption('month');
+    await page.waitForFunction(() => document.querySelector('#yt-shuffle-host').shadowRoot.querySelector('.btn.primary').disabled, null, { timeout: 5000 }).catch(() => {});
+    await waitIdle();
+    assert.deepEqual(searchQueries[searchQueries.length - 1], ['釣り', 'CAMSBAgEEAE='], '今月・視聴回数順で検索');
+    assert.match(await shadowText('.info'), /今月の人気「釣り」/);
+    step('期間「今月」でも検索できた');
+    await page.locator('#yt-shuffle-host .genre[data-genre="c:釣り"] .genre-del').click();
+    await page.waitForFunction(() => !document.querySelector('#yt-shuffle-host').shadowRoot.querySelector('.genre[data-genre="c:釣り"]'));
+    await page.locator('#yt-shuffle-host .fgroup:not([hidden]) select.sel').first().selectOption('week');
+    await page.waitForFunction(() => document.querySelector('#yt-shuffle-host').shadowRoot.querySelector('.btn.primary').disabled, null, { timeout: 5000 }).catch(() => {});
+    await waitIdle();
 
     // ダークテーマ
     // 投稿日で絞り込む（1 週間以内）→ 自動で再シャッフル

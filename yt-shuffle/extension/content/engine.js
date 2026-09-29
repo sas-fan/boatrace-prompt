@@ -213,9 +213,11 @@
       }
     }
 
-    const list = R.assignChannelMax([...cands.values()]);
+    // 直近に表示した動画は外す（毎回すべて別の動画にする）
+    const list = R.excludeShown(R.assignChannelMax([...cands.values()]), await store.getShown('subs'), ctx.settings.resultCount);
     const scored = R.scoreCandidates(list, { profile: ctx.profile, settings: ctx.settings, rng });
     const results = R.diversify(scored, ctx.settings.maxPerChannel, ctx.settings.resultCount);
+    await store.pushShown('subs', results.map((r) => r.id));
     await store.pushRecent({ channels: picks.map((p) => p.channel.id) });
     const out = {
       mode: 'subs',
@@ -350,8 +352,10 @@
         if (!R.exclusionReason(c, ctx)) cands.set(v.id, c);
       }
     }
-    const scored = R.scoreCandidates(R.assignChannelMax([...cands.values()]), { profile: ctx.profile, settings, rng });
+    const fresh = R.excludeShown(R.assignChannelMax([...cands.values()]), await store.getShown('similar'), settings.resultCount);
+    const scored = R.scoreCandidates(fresh, { profile: ctx.profile, settings, rng });
     const results = R.diversify(scored, settings.maxPerChannel, settings.resultCount);
+    await store.pushShown('similar', results.map((r) => r.id));
     const pool = R.reservePool(scored, results);
     const channels = ranked
       .filter((a) => !a.subscribed && !(a.id && hiddenCh.has(a.id)))
@@ -372,6 +376,91 @@
     return out;
   }
 
+  // ---------- ジャンル別人気 ----------
+  // YouTube 検索の「今週（期間は変更可）・視聴回数順」をジャンルのキーワードで引く
+  const SEARCH_TTL = 60 * 60 * 1000;
+  async function getSearch(query, period, ctx, minPages) {
+    const id = `${period}_${query}`;
+    let entry = await store.getListCache('srch', id);
+    if (entry && Date.now() - entry.t >= SEARCH_TTL) entry = null;
+    if (!entry) {
+      const res = await api.fetchSearch(query, { period, pages: minPages });
+      captureWatched(res.videos, ctx);
+      const now = Date.now();
+      entry = { t: now, token: res.token, pages: res.pages, videos: res.videos.map((v) => compact(v, {}, now)) };
+      await store.setListCache('srch', id, entry);
+    } else if (entry.pages < minPages && entry.token) {
+      // 全部入れ替えで候補が足りなくなったら、続きのページを読む
+      const res = await api.fetchSearch(query, { period, pages: minPages - entry.pages, token: entry.token });
+      captureWatched(res.videos, ctx);
+      const now = Date.now();
+      const seen = new Set(entry.videos.map((v) => v.id));
+      for (const v of res.videos) if (!seen.has(v.id)) entry.videos.push(compact(v, {}, now));
+      entry.token = res.token;
+      entry.pages += res.pages;
+      await store.setListCache('srch', id, entry);
+    }
+    return withDates(entry);
+  }
+
+  async function trending({ onProgress = noop, rng = Math.random } = {}) {
+    const ctx = await loadContext();
+    const { settings } = ctx;
+    const genre = R.resolveGenre(settings.trendGenre, ctx.profile, settings.customGenres);
+    const [periodKey, periodLabel, periodMs] = R.trendPeriod(settings.trendPeriod);
+    // 検索フィルタの期間に合わせて、念のため投稿日でも絞る（検索結果に混ざる「関連」棚など対策）
+    const tctx = Object.assign({}, ctx, { periodMs });
+    const subIds = new Set(ctx.subs.channels.map((c) => c.id));
+    const shown = await store.getShown('trend');
+
+    const build = async (minPages) => {
+      let done = 0;
+      onProgress({ text: `「${genre.label}」の${periodLabel}の人気動画を探しています…`, done: 0, total: genre.queries.length });
+      const lists = await U.mapLimit(genre.queries, 3, async (q) => {
+        const e = await getSearch(q, periodKey, ctx, minPages);
+        done++;
+        onProgress({ text: `「${genre.label}」の${periodLabel}の人気動画を探しています… ${done}/${genre.queries.length}`, done, total: genre.queries.length });
+        return e;
+      });
+      const cands = new Map();
+      for (const e of lists) {
+        if (!e) continue;
+        for (const v of e.videos) {
+          if (cands.has(v.id)) continue;
+          const c = Object.assign({}, v, {
+            rank: null,
+            channelMaxViews: 0, // チャンネル内ではなく全体の再生回数で比べる
+            reason: `${genre.label}・${periodLabel}の人気`,
+            kind: 'trend',
+            subscribed: !!(v.channelId && subIds.has(v.channelId)),
+          });
+          if (!R.exclusionReason(c, tctx)) cands.set(v.id, c);
+        }
+      }
+      return [...cands.values()];
+    };
+
+    // 表示済みを除いて足りなければ、先に続きのページを読む（それでも足りなければ直前の分だけ除く）
+    let raw = await build(2);
+    const allShown = new Set(shown.flat());
+    if (raw.filter((c) => !allShown.has(c.id)).length < settings.resultCount) raw = await build(5);
+    const cands = R.excludeShown(raw, shown, settings.resultCount);
+    const scored = R.scoreCandidates(cands, { profile: ctx.profile, settings, rng });
+    const results = R.diversify(scored, settings.maxPerChannel, settings.resultCount);
+    await store.pushShown('trend', results.map((r) => r.id));
+    const out = {
+      mode: 'trend',
+      at: Date.now(),
+      results,
+      pool: R.reservePool(scored, results),
+      genre: genre.label,
+      trendPeriod: periodLabel,
+      terms: R.topTerms(ctx.profile, 8),
+    };
+    await store.saveLast('trend', out);
+    return out;
+  }
+
   // ---------- 動作診断 ----------
   async function diagnose(log) {
     const safe = async (label, fn) => {
@@ -389,6 +478,12 @@
     await safe('視聴履歴（1ページ目）', async () => {
       const h = await api.fetchHistory(1);
       return `${h.length}件 / チャンネルID付き ${h.filter((v) => v.channelId).length}件`;
+    });
+    await safe('検索（ゲーム実況・今週・視聴回数順）', async () => {
+      const r = await api.fetchSearch('ゲーム実況', { period: 'week', pages: 1 });
+      return `${r.videos.length}件 / 再生回数あり ${r.videos.filter((v) => v.views != null).length}件 / 投稿日あり ${
+        r.videos.filter((v) => U.parseAge(v.published) != null).length
+      }件 / 続き ${r.token ? 'あり' : 'なし'}`;
     });
     const subs = await store.getSubs();
     const ch = subs.channels[Math.floor(Math.random() * subs.channels.length)];
@@ -411,6 +506,6 @@
     log(`保存データ: 登録 ${s.subs}件 / 視聴済み ${s.watched}件 / 非表示 動画${s.hiddenVideos}・チャンネル${s.hiddenChannels}`);
   }
 
-  const engine = { loadContext, sync, shuffleSubscribed, discoverSimilar, diagnose };
+  const engine = { loadContext, sync, shuffleSubscribed, discoverSimilar, trending, diagnose };
   YTS.engine = engine;
 })(typeof globalThis !== 'undefined' ? globalThis : this);

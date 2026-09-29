@@ -51,6 +51,9 @@
     width: 'M8 7l-5 5 5 5v-4h8v4l5-5-5-5v4H8z',
     skip: 'M6 18l8.5-6L6 6v12zM16 6v12h2V6h-2z',
     up: 'M7.41 15.41 12 10.83l4.59 4.58L18 14l-6-6-6 6z',
+    fire:
+      'M13.5.67s.74 2.65.74 4.8c0 2.06-1.35 3.73-3.41 3.73-2.07 0-3.63-1.67-3.63-3.73l.03-.36C5.21 7.51 4 10.62 4 14a8 8 0 0 0 16 0c0-5.39-2.59-10.2-6.5-13.33zM11.71 19a3.2 3.2 0 0 1-3.22-3.14c0-1.62 1.05-2.76 2.81-3.12 1.77-.36 3.6-1.21 4.62-2.58.39 1.29.59 2.65.59 4.04A4.8 4.8 0 0 1 11.71 19z',
+    add: 'M19 13h-6v6h-2v-6H5v-2h6V5h2v6h6v2z',
     subs:
       'M10 18v-6l5 3-5 3zm7-15H7v1h10V3zm3 3H4v1h16V6zm2 3H2v12h20V9zM3 10h18v10H3V10z',
   };
@@ -104,10 +107,18 @@
     },
     similar: {
       label: '近いチャンネル',
+      short: '近い',
       icon: 'compass',
       desc: 'よく見るチャンネルの関連動画から、まだ登録していない近いチャンネルを探し、その人気動画を選びます。',
     },
+    trend: {
+      label: 'ジャンル別人気',
+      short: '人気',
+      icon: 'fire',
+      desc: 'ジャンルを選ぶと、今週（期間は変更できます）よく再生されている動画を表示します。登録していないチャンネルも含みます。',
+    },
   };
+  MODES.subs.short = '登録';
 
   const state = { open: false, mode: 'subs', busy: false, data: {}, seen: new Set() };
   const els = {};
@@ -124,7 +135,12 @@
     h('button', { class: 'tab', role: 'tab', 'data-mode': mode, onclick: () => setMode(mode) }, icon(m.icon, 18), m.label)
   );
   els.desc = h('p', { class: 'desc' });
-  els.shuffleBtn = h('button', { class: 'btn primary', onclick: () => runShuffle() }, dice(20, '#ff0033'), 'シャッフル');
+  els.shuffleBtn = h(
+    'button',
+    { class: 'btn primary', title: '今表示している動画とは別の動画を選び直します', onclick: () => runShuffle() },
+    dice(20, '#ff0033'),
+    'シャッフル'
+  );
   els.luckyBtn = h('button', { class: 'btn', title: '候補からスコアの高い 1 本をすぐ再生', onclick: () => runLucky() }, icon('play', 18), 'おまかせ1本');
   els.syncBtn = h('button', { class: 'btn ghost', title: '登録チャンネルと視聴履歴を読み込み直す', onclick: () => runSync() }, icon('refresh', 18), '同期');
   els.status = h('div', { class: 'status' });
@@ -154,7 +170,54 @@
     U.PERIOD_UNITS.map(([key, label]) => h('option', { value: key }, label))
   );
   els.periodCustom = h('span', { class: 'custom' }, els.periodNum, els.periodUnit, h('span', { class: 'suffix' }, '以内'));
-  els.filters = h('div', { class: 'filters' }, h('span', { class: 'flabel' }, '投稿日'), els.periodSel, els.periodCustom);
+  els.periodGroup = h('span', { class: 'fgroup' }, h('span', { class: 'flabel' }, '投稿日'), els.periodSel, els.periodCustom);
+
+  // ジャンル別人気の期間（検索の「アップロード日」フィルタ）
+  els.trendPeriodSel = h(
+    'select',
+    { class: 'sel', title: 'どの期間の人気か', onchange: onTrendPeriodChange },
+    R.TREND_PERIODS.map(([key, label]) => h('option', { value: key }, `${label}の人気`))
+  );
+  els.trendPeriodGroup = h('span', { class: 'fgroup', hidden: true }, h('span', { class: 'flabel' }, '期間'), els.trendPeriodSel);
+
+  // 再生回数の下限
+  const VIEW_PRESETS = [
+    [0, '制限なし'],
+    [1000, '1,000回以上'],
+    [10000, '1万回以上'],
+    [100000, '10万回以上'],
+    [1000000, '100万回以上'],
+  ];
+  els.viewsSel = h(
+    'select',
+    { class: 'sel', title: 'これより再生回数が少ない動画は出さない', onchange: onViewsChange },
+    VIEW_PRESETS.map(([v, label]) => h('option', { value: v }, label))
+  );
+  els.filters = h(
+    'div',
+    { class: 'filters' },
+    els.periodGroup,
+    els.trendPeriodGroup,
+    h('span', { class: 'fgroup' }, h('span', { class: 'flabel' }, '再生回数'), els.viewsSel)
+  );
+
+  // ジャンル（ジャンル別人気タブのみ）
+  els.genreChips = h('div', { class: 'genres' });
+  els.genreInput = h('input', {
+    class: 'num genre-input',
+    type: 'text',
+    placeholder: 'キーワードで追加',
+    title: '好きなキーワードをジャンルとして追加（Enter）',
+    onkeydown: (e) => {
+      if (e.key === 'Enter') addCustomGenre();
+    },
+  });
+  els.genreRow = h(
+    'div',
+    { class: 'genre-row', hidden: true },
+    els.genreChips,
+    h('span', { class: 'genre-add' }, els.genreInput, h('button', { class: 'mini-btn', title: '追加', onclick: () => addCustomGenre() }, icon('add', 16)))
+  );
   els.bar = h('div', { class: 'bar indet' }, h('i'));
   els.ptext = h('span', { class: 'ptext' });
   els.progress = h('div', { class: 'progress' }, els.bar, els.ptext);
@@ -167,7 +230,7 @@
   els.miniShuffle = h('button', { class: 'mini-btn mini-primary', title: 'シャッフル', onclick: () => runShuffle() }, dice(18, '#ff0033'), 'シャッフル');
   els.miniLucky = h('button', { class: 'mini-btn', title: 'おまかせ1本', onclick: () => runLucky() }, icon('play', 16), 'おまかせ');
   els.miniTabs = Object.entries(MODES).map(([mode, m]) =>
-    h('button', { class: 'seg', 'data-mode': mode, title: m.label, onclick: () => setMode(mode) }, m.label.replace('チャンネル', ''))
+    h('button', { class: 'seg', 'data-mode': mode, title: m.label, onclick: () => setMode(mode) }, m.short)
   );
   els.mini = h(
     'div',
@@ -205,6 +268,7 @@
         h('nav', { class: 'tabs', role: 'tablist' }, els.tabs),
         els.desc,
         (els.actions = h('div', { class: 'actions' }, els.shuffleBtn, els.luckyBtn, els.syncBtn)),
+        els.genreRow,
         els.filters,
         els.status,
         els.error,
@@ -261,6 +325,15 @@
     updateFab();
     setPanelWidth(s.panelWidth, false);
     renderPeriod(s);
+    els.viewsSel.querySelectorAll('option[data-custom]').forEach((o) => o.remove());
+    const mv = Number(s.minViews) || 0;
+    if (!VIEW_PRESETS.some(([v]) => v === mv)) {
+      // 設定画面で半端な値にしたときは、その値を選択肢として出す
+      els.viewsSel.append(h('option', { value: mv, 'data-custom': true }, `${mv.toLocaleString()}回以上`));
+    }
+    els.viewsSel.value = String(mv);
+    els.trendPeriodSel.value = s.trendPeriod || 'week';
+    renderGenres(s);
   }
   store.getSettings().then(applySettings);
   chrome.storage.onChanged.addListener((changes, area) => {
@@ -332,6 +405,54 @@
     await store.saveSettings({ periodValue: v, periodUnit: els.periodUnit.value });
     reshuffleForFilter();
   }
+  async function onViewsChange() {
+    await store.saveSettings({ minViews: Number(els.viewsSel.value) || 0 });
+    reshuffleForFilter();
+  }
+  async function onTrendPeriodChange() {
+    await store.saveSettings({ trendPeriod: els.trendPeriodSel.value });
+    reshuffleForFilter();
+  }
+
+  // ---------- ジャンル ----------
+  function renderGenres(s) {
+    const current = s.trendGenre || 'interest';
+    const chip = (key, label, custom) =>
+      h(
+        'span',
+        { class: `genre${key === current ? ' on' : ''}`, 'data-genre': key },
+        h('button', { class: 'genre-btn', title: `${label}の人気動画を表示`, onclick: () => selectGenre(key) }, label),
+        custom
+          ? h('button', { class: 'genre-del', title: `「${label}」を削除`, onclick: () => removeCustomGenre(label) }, icon('close', 12))
+          : null
+      );
+    els.genreChips.replaceChildren(
+      ...R.TREND_GENRES.map(([key, label]) => chip(key, label, false)),
+      ...(s.customGenres || []).map((w) => chip('c:' + w, w, true))
+    );
+  }
+  async function selectGenre(key) {
+    await store.saveSettings({ trendGenre: key });
+    if (state.mode !== 'trend') await setMode('trend');
+    runShuffle();
+  }
+  async function addCustomGenre() {
+    const word = els.genreInput.value.trim().slice(0, 30);
+    if (!word) return;
+    const s = await store.getSettings();
+    const list = [word, ...(s.customGenres || []).filter((w) => w !== word)].slice(0, 12);
+    els.genreInput.value = '';
+    await store.saveSettings({ customGenres: list, trendGenre: 'c:' + word });
+    if (state.mode !== 'trend') await setMode('trend');
+    runShuffle();
+  }
+  async function removeCustomGenre(word) {
+    const s = await store.getSettings();
+    const patch = { customGenres: (s.customGenres || []).filter((w) => w !== word) };
+    if (s.trendGenre === 'c:' + word) patch.trendGenre = 'interest';
+    await store.saveSettings(patch);
+  }
+
   // 期間を変えたら、今のタブをシャッフルし直す
   let filterTimer = null;
   function reshuffleForFilter() {
@@ -387,6 +508,9 @@
     state.mode = mode;
     els.tabs.forEach((t) => t.setAttribute('aria-selected', String(t.dataset.mode === mode)));
     els.miniTabs.forEach((t) => t.setAttribute('aria-selected', String(t.dataset.mode === mode)));
+    els.genreRow.hidden = mode !== 'trend';
+    els.periodGroup.hidden = mode === 'trend';
+    els.trendPeriodGroup.hidden = mode !== 'trend';
     els.desc.textContent = MODES[mode].desc;
     if (!state.data[mode]) state.data[mode] = await store.getLast(mode);
     state.seen = new Set((await store.loadWatched()).keys());
@@ -452,7 +576,9 @@
       const out =
         mode === 'subs'
           ? await engine.shuffleSubscribed({ onProgress: setProgress })
-          : await engine.discoverSimilar({ onProgress: setProgress });
+          : mode === 'similar'
+          ? await engine.discoverSimilar({ onProgress: setProgress })
+          : await engine.trending({ onProgress: setProgress });
       state.data[mode] = out;
       state.seen = new Set((await store.loadWatched()).keys());
       if (state.mode === mode) renderResults();
@@ -624,21 +750,35 @@
       showEmpty(
         state.mode === 'subs'
           ? '「シャッフル」を押すと、登録チャンネルから人気の未視聴動画をランダムに選びます。'
-          : '「シャッフル」を押すと、あなたの好みに近い未登録チャンネルの人気動画を探します。'
+          : state.mode === 'similar'
+          ? '「シャッフル」を押すと、あなたの好みに近い未登録チャンネルの人気動画を探します。'
+          : '上のジャンルを選ぶ（または「シャッフル」を押す）と、今週よく再生されている動画を表示します。'
       );
       return;
     }
     const info = [];
     if (d.mode === 'subs') info.push(`${d.checked}チャンネルを調べて ${d.results.length}本を選びました`);
-    else info.push(`「${(d.seeds || []).slice(0, 3).join('」「')}」などを起点に ${d.results.length}本を選びました`);
+    else if (d.mode === 'similar') info.push(`「${(d.seeds || []).slice(0, 3).join('」「')}」などを起点に ${d.results.length}本を選びました`);
+    else info.push(`${d.trendPeriod}の人気「${d.genre}」から ${d.results.length}本を選びました`);
     if (d.mode === 'subs' && d.feed) info[0] = info[0].replace('チャンネルを調べて', 'チャンネル＋新着フィードを調べて');
     if (d.period) info.push(`［投稿日: ${d.period}］`);
     info.push(`（${U.formatAgo(d.at)}）`);
     els.info.replaceChildren(
-      info.join(''),
-      d.terms && d.terms.length
+      h(
+        'div',
+        { class: 'info-row' },
+        h('span', null, info.join('')),
+        h(
+          'button',
+          { class: 'act replace', title: '今表示している動画とは別の動画に、すべて入れ替えます', onclick: () => runShuffle() },
+          icon('refresh', 15),
+          '全部入れ替え'
+        )
+      ),
+      // replaceChildren は null を文字列 "null" にしてしまうので、出さないときは空のテキストにする
+      d.terms && d.terms.length && d.mode !== 'trend'
         ? h('div', { class: 'terms' }, 'よく見るキーワード:', d.terms.map((t) => h('span', { class: 'term' }, t)))
-        : null
+        : ''
     );
 
     els.found.replaceChildren();
@@ -661,7 +801,9 @@
 
     if (!d.results.length) {
       showEmptyList(
-        d.period
+        d.mode === 'trend'
+          ? `「${d.genre}」で条件に合う未視聴の動画が見つかりませんでした。期間を広げるか、再生回数の条件をゆるめてください。`
+          : d.period
           ? `投稿日が${d.period}の未視聴の動画が見つかりませんでした。期間を広げるか、もう一度シャッフルしてください。`
           : '条件に合う未視聴の動画が見つかりませんでした。もう一度シャッフルするか、設定で条件をゆるめてください。'
       );
@@ -680,7 +822,8 @@
     const seen = state.seen.has(r.id);
     const meta2 = [r.views != null ? U.formatViews(r.views) : null, relTime(r.published)].filter(Boolean).join(' ・ ');
     const chips = [
-      r.reason ? h('span', { class: `chip ${r.kind === 'similar' ? 'similar' : 'reason'}` }, r.reason) : null,
+      r.reason ? h('span', { class: `chip ${r.kind === 'similar' ? 'similar' : r.kind === 'trend' ? 'trend' : 'reason'}` }, r.reason) : null,
+      r.subscribed ? h('span', { class: 'chip' }, '登録済み') : null,
       r.rank ? h('span', { class: 'chip' }, `チャンネル内 人気${r.rank}位`) : null,
       seen ? h('span', { class: 'chip' }, '視聴済み') : null,
     ];

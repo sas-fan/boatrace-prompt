@@ -544,3 +544,47 @@ test('recommend: refill は上限を守って補充し、残りを返す', () =>
   const scored = [mk('a', 'X'), mk('z', 'Q'), mk('b', 'X')];
   assert.deepEqual(R.reservePool(scored, [scored[0]]).map((x) => x.id), ['z', 'b']);
 });
+
+// ---------------------------------------------------------------- 全部入れ替え・ジャンル別人気
+test('searchParams: 視聴回数順＋アップロード日＋動画', () => {
+  assert.equal(YTS.api.searchParams('week'), 'CAMSBAgDEAE=');
+  assert.equal(YTS.api.searchParams('today'), 'CAMSBAgCEAE=');
+  assert.equal(YTS.api.searchParams('month'), 'CAMSBAgEEAE=');
+  assert.equal(YTS.api.searchParams('year'), 'CAMSBAgFEAE=');
+});
+
+test('excludeShown: 直近 3 回分を外し、足りなければ直前の分だけ外す', () => {
+  const cands = ['a', 'b', 'c', 'd', 'e'].map((id) => ({ id }));
+  const shown = [['a'], ['b'], ['c']];
+  assert.deepEqual(R.excludeShown(cands, shown, 2).map((c) => c.id), ['d', 'e']);
+  assert.deepEqual(R.excludeShown(cands, shown, 4).map((c) => c.id), ['b', 'c', 'd', 'e']);
+  assert.deepEqual(R.excludeShown(cands, [], 4).length, 5);
+});
+
+test('resolveGenre: 既定ジャンル・あなた向け・自分で追加したキーワード', () => {
+  assert.deepEqual(R.resolveGenre('game', null), { key: 'game', label: 'ゲーム', queries: ['ゲーム実況'] });
+  assert.deepEqual(R.resolveGenre('c:釣り', null), { key: 'c:釣り', label: '釣り', queries: ['釣り'] });
+  const profile = R.buildProfile(['ラーメン 東京', 'ラーメン 大阪', 'キャンプ 東京', 'キャンプ 冬']);
+  const g = R.resolveGenre('interest', profile);
+  assert.equal(g.key, 'interest');
+  assert.deepEqual(g.queries.slice().sort(), ['キャンプ', 'ラーメン', '東京'].sort());
+  assert.match(g.label, /^あなた向け（/);
+  assert.deepEqual(R.resolveGenre('interest', R.buildProfile([])).queries, ['ゲーム実況', 'MV', 'お笑い']);
+  assert.equal(R.resolveGenre('unknown', null).key, 'interest');
+  assert.equal(R.trendPeriod('month')[1], '今月');
+  assert.equal(R.trendPeriod('xxx')[0], 'week');
+});
+
+test('store: 最低再生回数の既定は 1000（旧設定の 0 も引き上げ、明示的な 0 は尊重）', async () => {
+  await chrome.storage.local.clear();
+  assert.equal((await store.getSettings()).minViews, 1000);
+  await chrome.storage.local.set({ settings: { minViews: 0, resultCount: 10 } }); // v0.3 以前の保存形式
+  assert.equal((await store.getSettings()).minViews, 1000);
+  await store.saveSettings({ minViews: 0 }); // 新しい設定画面で 0 にした
+  assert.equal((await store.getSettings()).minViews, 0);
+  await store.pushShown('subs', ['a']);
+  await store.pushShown('subs', ['b']);
+  await store.pushShown('subs', ['c']);
+  await store.pushShown('subs', ['d']);
+  assert.deepEqual(await store.getShown('subs'), [['d'], ['c'], ['b']]);
+});

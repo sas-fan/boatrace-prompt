@@ -238,6 +238,45 @@
     return [...map.values()];
   }
 
+  // ---------- 検索（ジャンル別人気） ----------
+  // 検索フィルタ sp: 「並べ替え = 視聴回数」「アップロード日 = 今日/今週/今月/今年」「タイプ = 動画」
+  // （protobuf: {1: 3, 2: {1: 期間, 2: 1}} を base64 にしたもの）
+  const UPLOAD_DATE = { hour: 1, today: 2, week: 3, month: 4, year: 5 };
+  function searchParams(period) {
+    const bytes = [0x08, 0x03, 0x12, 0x04, 0x08, UPLOAD_DATE[period] || 3, 0x10, 0x01];
+    return btoa(String.fromCharCode(...bytes));
+  }
+
+  // token を渡すと、その続きから pages ページ分を読む
+  async function fetchSearch(query, { period = 'week', pages = 2, token = null } = {}) {
+    const map = new Map();
+    const add = (vids) => vids.forEach((v) => map.has(v.id) || map.set(v.id, v));
+    let next = token;
+    let cfg = null;
+    let done = 0;
+    if (!token) {
+      const page = await getPage(`/results?search_query=${encodeURIComponent(query)}&sp=${encodeURIComponent(searchParams(period))}`);
+      if (!page.data) throw new Error('検索結果を読み取れませんでした');
+      cfg = page.cfg;
+      add(X.collectVideos(page.data));
+      next = X.findContinuation(page.data);
+      done = 1;
+    }
+    while (next && done < pages) {
+      try {
+        const json = await innertube('search', { continuation: next }, cfg);
+        const more = X.collectVideos(json);
+        next = X.findContinuation(json);
+        done++;
+        if (!more.length) break;
+        add(more);
+      } catch (e) {
+        break;
+      }
+    }
+    return { videos: [...map.values()], token: next || null, pages: done };
+  }
+
   // ---------- 動画ページ（関連動画・投稿者） ----------
 
   async function fetchWatch(videoId, { related = true } = {}) {
@@ -267,6 +306,8 @@
     fetchPopular,
     fetchLatest,
     fetchSubscriptionFeed,
+    searchParams,
+    fetchSearch,
     fetchWatch,
   };
   YTS.api = api;

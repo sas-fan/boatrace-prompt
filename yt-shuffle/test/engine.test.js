@@ -98,6 +98,34 @@ YTS.api = {
       watched: null,
     }));
   },
+  async fetchSearch(query, { period, pages = 2, token = null } = {}) {
+    calls.search = (calls.search || []).concat([[query, period, pages, token]]);
+    // 1 ページ 10 本。3 ページまで。
+    const start = token ? parseInt(token.slice(1), 10) : 0;
+    const videos = [];
+    for (let p = 0; p < pages && start + p < 3; p++) {
+      for (let k = 0; k < 10; k++) {
+        const i = (start + p) * 10 + k;
+        const qn = [...query].reduce((a, c) => a + c.charCodeAt(0), 0) % 1000;
+        videos.push({
+          id: F.vid(900000 + qn * 100 + i),
+          title: `${query} 今週の人気 ${i}`,
+          channelId: F.cid(2000 + (i % 15)),
+          channelName: `人気チャンネル${i % 15}`,
+          views: i === 3 ? 500 : 5_000_000 - i * 10000, // 3 番は再生回数が少ない
+          duration: i === 4 ? 30 : 700, // 4 番はショート相当
+          published: i === 5 ? '3 週間前' : `${1 + (i % 6)} 日前`, // 5 番は期間外（関連の棚など）
+          live: false,
+          upcoming: false,
+          short: i === 4,
+          members: false,
+          watched: i === 6 ? 100 : null, // 6 番は視聴済み
+        });
+      }
+    }
+    const end = start + pages;
+    return { videos, token: end < 3 ? 'p' + end : null, pages: Math.min(pages, 3 - start) };
+  },
   async fetchWatch(videoId, { related } = {}) {
     calls.watch.push(videoId);
     const n = parseInt(videoId.slice(3), 10);
@@ -227,4 +255,53 @@ test('スキップした動画は次のシャッフルに出ず、補充候補�
   const skipped = new Set(first.results.map((r) => r.id));
   assert.ok(second.results.length > 0);
   assert.ok(second.results.every((r) => !skipped.has(r.id)), 'スキップした動画は出ない');
+});
+
+test('ジャンル別人気: 今週・再生回数順の検索から、条件外を除いて選ぶ', async () => {
+  await chrome.storage.local.clear();
+  await engine.sync({ force: true });
+  await store.saveSettings({ trendGenre: 'game', trendPeriod: 'week', resultCount: 8, maxPerChannel: 1 });
+  const out = await engine.trending({ rng: U.makeRng(2) });
+  assert.equal(out.mode, 'trend');
+  assert.equal(out.genre, 'ゲーム');
+  assert.equal(out.trendPeriod, '今週');
+  assert.equal(out.results.length, 8);
+  const last = calls.search[calls.search.length - 1];
+  assert.deepEqual(last.slice(0, 2), ['ゲーム実況', 'week']);
+  const bad = new Set([3, 4, 5, 6].map((i) => i));
+  for (const r of out.results) {
+    const i = parseInt(r.title.split(' ').pop(), 10);
+    assert.ok(!bad.has(i), `除外されるべき動画: ${r.title}`);
+    assert.equal(r.kind, 'trend');
+    assert.match(r.reason, /ゲーム・今週の人気/);
+    assert.ok(r.views >= 1000);
+  }
+  // 全部入れ替え: 2 回目は 1 回目と重ならない（足りなければ続きのページを読む）
+  const out2 = await engine.trending({ rng: U.makeRng(3) });
+  const ids1 = new Set(out.results.map((r) => r.id));
+  assert.ok(out2.results.length > 0);
+  assert.ok(out2.results.every((r) => !ids1.has(r.id)), '全部別の動画');
+  const out3 = await engine.trending({ rng: U.makeRng(4) });
+  const ids2 = new Set(out2.results.map((r) => r.id));
+  assert.ok(out3.results.every((r) => !ids1.has(r.id) && !ids2.has(r.id)));
+  assert.ok(calls.search.some((c) => c[3]), '続きのページを読んだ');
+
+  // あなた向け: 視聴履歴のキーワードで検索する
+  await store.saveSettings({ trendGenre: 'interest' });
+  const mine = await engine.trending({ rng: U.makeRng(5) });
+  assert.match(mine.genre, /^あなた向け（/);
+  const queries = calls.search.slice(-3).map((c) => c[0]);
+  assert.ok(queries.includes('ラーメン'), queries.join(','));
+});
+
+test('登録チャンネル: 続けてシャッフルすると全部別の動画になる', async () => {
+  await chrome.storage.local.clear();
+  await engine.sync({ force: true });
+  await store.saveSettings({ channelsPerShuffle: 12, resultCount: 8, maxPerChannel: 2 });
+  const a = await engine.shuffleSubscribed({ rng: U.makeRng(8) });
+  await chrome.storage.local.set({ recent: { channels: [], seeds: [] } }); // チャンネルの重なりも起きるようにする
+  const b = await engine.shuffleSubscribed({ rng: U.makeRng(8) });
+  const ids = new Set(a.results.map((r) => r.id));
+  assert.equal(b.results.length, 8);
+  assert.ok(b.results.every((r) => !ids.has(r.id)));
 });
